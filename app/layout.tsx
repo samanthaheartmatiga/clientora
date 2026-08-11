@@ -2,6 +2,7 @@ import React from "react";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
+import { NotificationProvider } from "@/context/NotificationContext";
 import AppShell from "@/components/layout/AppShell";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -23,7 +24,9 @@ export default function RootLayout({
         className={`${inter.className} bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased h-screen overflow-hidden flex p-0 m-0 transition-colors duration-200`}
       >
         <ThemeProvider>
-          <AppShell>{children}</AppShell>
+          <NotificationProvider>
+            <AppShell>{children}</AppShell>
+          </NotificationProvider>
         </ThemeProvider>
       </body>
     </html>
