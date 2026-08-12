@@ -9,8 +9,11 @@ import {
   CheckCircle2,
   Clock,
   Archive,
+  AlertCircle,
 } from "lucide-react";
 import { Client } from "./types";
+import { useUserRole } from "@/hooks/useUserRole";
+import { canPerformAction } from "@/lib/permissions";
 
 interface ClientModalProps {
   isOpen: boolean;
@@ -29,6 +32,8 @@ export default function ClientModal({
   editingClient,
   onSubmit,
 }: ClientModalProps) {
+  const { role, loading } = useUserRole();
+
   const [companyName, setCompanyName] = useState<string>(
     editingClient?.company_name || ""
   );
@@ -42,9 +47,13 @@ export default function ClientModal({
 
   if (!isOpen) return null;
 
+  // Determine required action based on mode
+  const requiredAction = editingClient ? "update" : "create";
+  const hasAccess = canPerformAction(role, "clients", requiredAction);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!companyName || !contactEmail) return;
+    if (!hasAccess || !companyName || !contactEmail) return;
 
     setIsSubmitting(true);
     await onSubmit({
@@ -113,6 +122,16 @@ export default function ClientModal({
           </button>
         </div>
 
+        {/* Permission Error Banner */}
+        {!loading && !hasAccess && (
+          <div className="flex items-center space-x-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl p-3 text-xs text-rose-600 dark:text-rose-400">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+            <span>
+              Permission Denied: Your role ({role}) cannot {editingClient ? "edit" : "create"} clients.
+            </span>
+          </div>
+        )}
+
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="space-y-5">
           {/* Company Name */}
@@ -125,10 +144,11 @@ export default function ClientModal({
               <input
                 type="text"
                 required
+                disabled={!hasAccess}
                 placeholder="e.g. Black Clover"
                 value={companyName}
                 onChange={(e) => setCompanyName(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl pl-10 pr-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-inner"
+                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl pl-10 pr-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-inner disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
           </div>
@@ -143,10 +163,11 @@ export default function ClientModal({
               <input
                 type="email"
                 required
+                disabled={!hasAccess}
                 placeholder="e.g. blaver@gmail.com"
                 value={contactEmail}
                 onChange={(e) => setContactEmail(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl pl-10 pr-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-inner"
+                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl pl-10 pr-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition shadow-inner disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
           </div>
@@ -164,8 +185,9 @@ export default function ClientModal({
                   <button
                     key={opt.id}
                     type="button"
+                    disabled={!hasAccess}
                     onClick={() => setStatus(opt.id)}
-                    className={`flex items-center justify-center space-x-1.5 py-2 px-3 rounded-xl border text-xs font-semibold transition-all ${
+                    className={`flex items-center justify-center space-x-1.5 py-2 px-3 rounded-xl border text-xs font-semibold transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
                       isSelected
                         ? opt.activeStyle
                         : `border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 ${opt.hoverStyle}`
@@ -190,8 +212,8 @@ export default function ClientModal({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-600/25 transition flex items-center space-x-2 disabled:opacity-50"
+              disabled={isSubmitting || !hasAccess || loading}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-600/25 transition flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               <span>{editingClient ? "Save Changes" : "Create Client"}</span>

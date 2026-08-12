@@ -3,6 +3,9 @@
 import React from "react";
 import { FileText, Edit2, Trash2, CheckCircle2 } from "lucide-react";
 import { Invoice } from "./types";
+import { PermissionGuard } from "@/components/common/PermissionGuard";
+import { useUserRole } from "@/hooks/useUserRole";
+import { canPerformAction } from "@/lib/permissions";
 
 interface InvoiceTableProps {
   invoices: Invoice[];
@@ -19,6 +22,22 @@ export default function InvoiceTable({
   onDelete,
   onStatusChange,
 }: InvoiceTableProps) {
+  const { role } = useUserRole();
+
+  const handleStatusChange = (id: string, newStatus: Invoice["status"]) => {
+    if (!canPerformAction(role, "invoices", "update")) return;
+    onStatusChange(id, newStatus);
+  };
+
+  const handleDelete = (id: string) => {
+    if (!canPerformAction(role, "invoices", "delete")) return;
+    onDelete(id);
+  };
+
+  const canEdit = canPerformAction(role, "invoices", "update");
+  const canDelete = canPerformAction(role, "invoices", "delete");
+  const hasActions = canEdit || canDelete;
+
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden shadow-sm">
       <div className="overflow-x-auto">
@@ -30,19 +49,19 @@ export default function InvoiceTable({
               <th className="px-5 py-3.5">Amount</th>
               <th className="px-5 py-3.5">Status</th>
               <th className="px-5 py-3.5">Due Date</th>
-              <th className="px-5 py-3.5 text-right">Actions</th>
+              {hasActions && <th className="px-5 py-3.5 text-right">Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-slate-700 dark:text-slate-300">
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
+                <td colSpan={hasActions ? 6 : 5} className="px-5 py-8 text-center text-slate-400">
                   Loading invoices database...
                 </td>
               </tr>
             ) : invoices.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
+                <td colSpan={hasActions ? 6 : 5} className="px-5 py-8 text-center text-slate-400">
                   No invoices found.
                 </td>
               </tr>
@@ -83,34 +102,45 @@ export default function InvoiceTable({
                   <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">
                     {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "N/A"}
                   </td>
-                  <td className="px-5 py-3.5 text-right space-x-1">
-                    {inv.status !== "Paid" && (
-                      <button
-                        title="Mark as Paid"
-                        suppressHydrationWarning
-                        onClick={() => onStatusChange(inv.id, "Paid")}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-                      >
-                        <CheckCircle2 className="h-4 w-4" />
-                      </button>
-                    )}
-                    <button
-                      title="Edit Invoice"
-                      suppressHydrationWarning
-                      onClick={() => onEdit(inv)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-                    >
-                      <Edit2 className="h-4 w-4" />
-                    </button>
-                    <button
-                      title="Delete Invoice"
-                      suppressHydrationWarning
-                      onClick={() => onDelete(inv.id)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </td>
+
+                  {hasActions && (
+                    <td className="px-5 py-3.5 text-right space-x-1">
+                      {inv.status !== "Paid" && (
+                        <PermissionGuard module="invoices" action="update">
+                          <button
+                            title="Mark as Paid"
+                            suppressHydrationWarning
+                            onClick={() => handleStatusChange(inv.id, "Paid")}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                          >
+                            <CheckCircle2 className="h-4 w-4" />
+                          </button>
+                        </PermissionGuard>
+                      )}
+
+                      <PermissionGuard module="invoices" action="update">
+                        <button
+                          title="Edit Invoice"
+                          suppressHydrationWarning
+                          onClick={() => onEdit(inv)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                        >
+                          <Edit2 className="h-4 w-4" />
+                        </button>
+                      </PermissionGuard>
+
+                      <PermissionGuard module="invoices" action="delete">
+                        <button
+                          title="Delete Invoice"
+                          suppressHydrationWarning
+                          onClick={() => handleDelete(inv.id)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </PermissionGuard>
+                    </td>
+                  )}
                 </tr>
               ))
             )}

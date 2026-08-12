@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
-import { X, Loader2, Zap, Upload, FileText } from "lucide-react";
+import { X, Loader2, Zap, Upload, FileText, AlertCircle } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { Template } from "./types";
+import { useUserRole } from "@/hooks/useUserRole";
+import { canPerformAction } from "@/lib/permissions";
 
 interface TemplateModalProps {
   isOpen: boolean;
@@ -25,6 +27,8 @@ export default function TemplateModal({
   editingTemplate,
   onSubmit,
 }: TemplateModalProps) {
+  const { role, loading } = useUserRole();
+
   const [title, setTitle] = useState<string>(editingTemplate?.title || "");
   const [category, setCategory] = useState<Template["category"]>(
     editingTemplate?.category || "Proposal"
@@ -38,7 +42,11 @@ export default function TemplateModal({
 
   if (!isOpen) return null;
 
+  const requiredAction = editingTemplate ? "update" : "create";
+  const hasAccess = canPerformAction(role, "templates", requiredAction);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!hasAccess) return;
     if (e.target.files && e.target.files[0]) {
       setSelectedFile(e.target.files[0]);
     }
@@ -46,7 +54,7 @@ export default function TemplateModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title) return;
+    if (!hasAccess || !title) return;
 
     try {
       setIsSubmitting(true);
@@ -54,7 +62,6 @@ export default function TemplateModal({
       let fileName = editingTemplate?.file_name || "";
       let fileSize = editingTemplate?.file_size || null;
 
-      // Upload file if selected
       if (selectedFile) {
         const fileExt = selectedFile.name.split(".").pop();
         const filePath = `${Date.now()}_${Math.random()
@@ -134,6 +141,15 @@ export default function TemplateModal({
           </button>
         </div>
 
+        {!loading && !hasAccess && (
+          <div className="flex items-center space-x-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl p-3 text-xs text-rose-600 dark:text-rose-400">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+            <span>
+              Permission Denied: Your role ({role}) cannot {editingTemplate ? "edit" : "upload"} templates.
+            </span>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
@@ -142,10 +158,11 @@ export default function TemplateModal({
             <input
               type="text"
               required
+              disabled={!hasAccess}
               placeholder="e.g. Master Web Development Services Contract"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -154,9 +171,10 @@ export default function TemplateModal({
               Category
             </label>
             <select
+              disabled={!hasAccess}
               value={category}
               onChange={(e) => setCategory(e.target.value as Template["category"])}
-              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer"
+              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {categories.map((cat) => (
                 <option key={cat} value={cat}>
@@ -172,10 +190,11 @@ export default function TemplateModal({
             </label>
             <input
               type="text"
+              disabled={!hasAccess}
               placeholder="Brief instructions on when and how to use this document..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -192,12 +211,17 @@ export default function TemplateModal({
                     : editingTemplate?.file_name || "No file selected"}
                 </span>
               </div>
-              <label className="bg-indigo-600/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-600 hover:text-white px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition flex items-center space-x-1 shrink-0">
+              <label
+                className={`bg-indigo-600/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-600 hover:text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shrink-0 ${
+                  !hasAccess ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
+                }`}
+              >
                 <Upload className="h-3.5 w-3.5" />
                 <span>{selectedFile || editingTemplate ? "Change File" : "Upload File"}</span>
                 <input
                   type="file"
                   accept=".docx,.doc,.pdf,.txt"
+                  disabled={!hasAccess}
                   className="hidden"
                   onChange={handleFileChange}
                 />
@@ -215,8 +239,8 @@ export default function TemplateModal({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-lg shadow-indigo-600/25 transition flex items-center space-x-2 disabled:opacity-50 cursor-pointer"
+              disabled={isSubmitting || !hasAccess || loading}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-lg shadow-indigo-600/25 transition flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               <span>{editingTemplate ? "Save Changes" : "Upload Template"}</span>

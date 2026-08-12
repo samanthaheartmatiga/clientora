@@ -32,7 +32,7 @@ export default function MeetingControls({
         />
       </div>
 
-      <div className="flex items-center space-x-1.5 w-full sm:w-auto overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex items-center space-x-1.5 w-full sm:w-auto overflow-x-auto scrollbar-none [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
         {statuses.map((st) => (
           <button
             key={st}

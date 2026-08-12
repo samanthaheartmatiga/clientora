@@ -15,6 +15,9 @@ import {
   FolderKanban,
 } from "lucide-react";
 import { Client } from "./types";
+import { PermissionGuard } from "@/components/common/PermissionGuard";
+import { useUserRole } from "@/hooks/useUserRole";
+import { canPerformAction } from "@/lib/permissions";
 
 interface ClientTableProps {
   clients: Client[];
@@ -29,6 +32,7 @@ export default function ClientTable({
   onEdit,
   onDelete,
 }: ClientTableProps) {
+  const { role } = useUserRole();
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -50,6 +54,19 @@ export default function ClientTable({
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [activeMenuId]);
+
+  const handleDelete = (id: string) => {
+    // Permission check fallback
+    if (!canPerformAction(role, "clients", "delete")) {
+      return;
+    }
+    onDelete(id);
+    setActiveMenuId(null);
+  };
+
+  const canEdit = canPerformAction(role, "clients", "update");
+  const canDelete = canPerformAction(role, "clients", "delete");
+  const hasActions = canEdit || canDelete;
 
   const getStatusBadge = (clientStatus: Client["status"]) => {
     switch (clientStatus) {
@@ -88,13 +105,13 @@ export default function ClientTable({
               <th className="px-5 py-3.5 w-[14%]">Status</th>
               <th className="px-5 py-3.5 w-[12%]">Projects</th>
               <th className="px-5 py-3.5 w-[12%]">Created Date</th>
-              <th className="px-5 py-3.5 w-[8%] text-right">Actions</th>
+              {hasActions && <th className="px-5 py-3.5 w-[8%] text-right">Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-slate-700 dark:text-slate-200">
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-5 py-12 text-center text-slate-400">
+                <td colSpan={hasActions ? 6 : 5} className="px-5 py-12 text-center text-slate-400">
                   <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2 text-indigo-500" />
                   <span>Loading clients data...</span>
                 </td>
@@ -140,51 +157,55 @@ export default function ClientTable({
                       : client.created_at}
                   </td>
 
-                  <td className="px-5 py-4 text-right relative">
-                    <button
-                      onClick={() =>
-                        setActiveMenuId(
-                          activeMenuId === client.id ? null : client.id
-                        )
-                      }
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                    >
-                      <MoreVertical className="h-4 w-4" />
-                    </button>
-
-                    {activeMenuId === client.id && (
-                      <div
-                        ref={menuRef}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 z-50 w-28 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xl p-0.5 text-left space-y-0.5"
+                  {hasActions && (
+                    <td className="px-5 py-4 text-right relative">
+                      <button
+                        onClick={() =>
+                          setActiveMenuId(
+                            activeMenuId === client.id ? null : client.id
+                          )
+                        }
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition"
                       >
-                        <button
-                          onClick={() => {
-                            onEdit(client);
-                            setActiveMenuId(null);
-                          }}
-                          className="w-full flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                        <MoreVertical className="h-4 w-4" />
+                      </button>
+
+                      {activeMenuId === client.id && (
+                        <div
+                          ref={menuRef}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 z-50 w-28 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xl p-0.5 text-left space-y-0.5"
                         >
-                          <Edit2 className="h-3 w-3 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                          <span>Edit</span>
-                        </button>
-                        <button
-                          onClick={() => {
-                            onDelete(client.id);
-                            setActiveMenuId(null);
-                          }}
-                          className="w-full flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition"
-                        >
-                          <Trash2 className="h-3 w-3 shrink-0" />
-                          <span>Delete</span>
-                        </button>
-                      </div>
-                    )}
-                  </td>
+                          <PermissionGuard module="clients" action="update">
+                            <button
+                              onClick={() => {
+                                onEdit(client);
+                                setActiveMenuId(null);
+                              }}
+                              className="w-full flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                            >
+                              <Edit2 className="h-3 w-3 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                              <span>Edit</span>
+                            </button>
+                          </PermissionGuard>
+
+                          <PermissionGuard module="clients" action="delete">
+                            <button
+                              onClick={() => handleDelete(client.id)}
+                              className="w-full flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition"
+                            >
+                              <Trash2 className="h-3 w-3 shrink-0" />
+                              <span>Delete</span>
+                            </button>
+                          </PermissionGuard>
+                        </div>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
+                <td colSpan={hasActions ? 6 : 5} className="px-5 py-8 text-center text-slate-400">
                   No clients found matching your search.
                 </td>
               </tr>

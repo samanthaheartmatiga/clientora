@@ -3,6 +3,9 @@
 import React, { useState } from "react";
 import { Edit2, Trash2, FileText, Download, ExternalLink, Loader2 } from "lucide-react";
 import { Template } from "./types";
+import { PermissionGuard } from "@/components/common/PermissionGuard";
+import { useUserRole } from "@/hooks/useUserRole";
+import { canPerformAction } from "@/lib/permissions";
 
 interface TemplateGridProps {
   templates: Template[];
@@ -17,7 +20,13 @@ export default function TemplateGrid({
   onEdit,
   onDelete,
 }: TemplateGridProps) {
+  const { role } = useUserRole();
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  const handleDelete = (id: string) => {
+    if (!canPerformAction(role, "templates", "delete")) return;
+    onDelete(id);
+  };
 
   const formatFileSize = (bytes?: number | null) => {
     if (!bytes) return "";
@@ -95,23 +104,30 @@ export default function TemplateGrid({
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
                 {tpl.category}
               </span>
+
+              {/* EDIT / DELETE ACTION BUTTONS FOR ADMIN/SUPERADMIN ONLY */}
               <div className="flex items-center space-x-1">
-                <button
-                  title="Edit Template Details"
-                  suppressHydrationWarning
-                  onClick={() => onEdit(tpl)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-                >
-                  <Edit2 className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  title="Delete Template"
-                  suppressHydrationWarning
-                  onClick={() => onDelete(tpl.id)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                <PermissionGuard module="templates" action="update">
+                  <button
+                    title="Edit Template Details"
+                    suppressHydrationWarning
+                    onClick={() => onEdit(tpl)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    <Edit2 className="h-3.5 w-3.5" />
+                  </button>
+                </PermissionGuard>
+
+                <PermissionGuard module="templates" action="delete">
+                  <button
+                    title="Delete Template"
+                    suppressHydrationWarning
+                    onClick={() => handleDelete(tpl.id)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </PermissionGuard>
               </div>
             </div>
 

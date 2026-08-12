@@ -18,6 +18,9 @@ import {
   Plus,
 } from "lucide-react";
 import { Meeting } from "./types";
+import { PermissionGuard } from "@/components/common/PermissionGuard";
+import { useUserRole } from "@/hooks/useUserRole";
+import { canPerformAction } from "@/lib/permissions";
 
 interface MeetingGridProps {
   meetings: Meeting[];
@@ -27,7 +30,6 @@ interface MeetingGridProps {
   onStatusChange: (id: string, newStatus: Meeting["status"]) => void;
 }
 
-// Helper function to format 24-hour time strings (HH:mm:ss or HH:mm) to 12-hour AM/PM
 function formatTo12Hour(timeStr: string): string {
   if (!timeStr) return "";
   const parts = timeStr.split(":");
@@ -48,6 +50,18 @@ export default function MeetingGrid({
   onDelete,
   onStatusChange,
 }: MeetingGridProps) {
+  const { role } = useUserRole();
+
+  const handleStatusChange = (id: string, newStatus: Meeting["status"]) => {
+    if (!canPerformAction(role, "meetings", "update")) return;
+    onStatusChange(id, newStatus);
+  };
+
+  const handleDelete = (id: string) => {
+    if (!canPerformAction(role, "meetings", "delete")) return;
+    onDelete(id);
+  };
+
   if (loading) {
     return (
       <div className="p-8 text-center text-xs text-slate-400 border border-slate-200 dark:border-slate-800/80 rounded-2xl bg-white dark:bg-slate-900">
@@ -96,6 +110,8 @@ export default function MeetingGrid({
     }
   };
 
+  const canEdit = canPerformAction(role, "meetings", "update");
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {meetings.map((m) => (
@@ -123,22 +139,27 @@ export default function MeetingGrid({
               </div>
 
               <div className="flex items-center space-x-1">
-                <button
-                  title="Edit Meeting"
-                  suppressHydrationWarning
-                  onClick={() => onEdit(m)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-                >
-                  <Edit2 className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  title="Delete Meeting"
-                  suppressHydrationWarning
-                  onClick={() => onDelete(m.id)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                <PermissionGuard module="meetings" action="update">
+                  <button
+                    title="Edit Meeting"
+                    suppressHydrationWarning
+                    onClick={() => onEdit(m)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    <Edit2 className="h-3.5 w-3.5" />
+                  </button>
+                </PermissionGuard>
+
+                <PermissionGuard module="meetings" action="delete">
+                  <button
+                    title="Delete Meeting"
+                    suppressHydrationWarning
+                    onClick={() => handleDelete(m.id)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </PermissionGuard>
               </div>
             </div>
 
@@ -193,10 +214,11 @@ export default function MeetingGrid({
           <div className="pt-3 border-t border-slate-100 dark:border-slate-800/60 flex items-center justify-between gap-2">
             <select
               value={m.status}
+              disabled={!canEdit}
               onChange={(e) =>
-                onStatusChange(m.id, e.target.value as Meeting["status"])
+                handleStatusChange(m.id, e.target.value as Meeting["status"])
               }
-              className="bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 py-1 text-[11px] font-medium text-slate-700 dark:text-slate-300 focus:outline-none focus:border-indigo-500 transition cursor-pointer"
+              className="bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 py-1 text-[11px] font-medium text-slate-700 dark:text-slate-300 focus:outline-none focus:border-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <option value="Scheduled">Scheduled</option>
               <option value="Completed">Completed</option>
@@ -219,14 +241,16 @@ export default function MeetingGrid({
                   <span>Join Call</span>
                 </a>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => onEdit(m)}
-                  className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-medium transition cursor-pointer"
-                >
-                  <Plus className="h-3 w-3" />
-                  <span>Add Link</span>
-                </button>
+                <PermissionGuard module="meetings" action="update">
+                  <button
+                    type="button"
+                    onClick={() => onEdit(m)}
+                    className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-medium transition cursor-pointer"
+                  >
+                    <Plus className="h-3 w-3" />
+                    <span>Add Link</span>
+                  </button>
+                </PermissionGuard>
               )
             ) : (
               <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">

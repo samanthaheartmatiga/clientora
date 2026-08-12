@@ -9,8 +9,11 @@ import {
   Clock,
   Search,
   CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 import { Project, ClientOption } from "./types";
+import { useUserRole } from "@/hooks/useUserRole";
+import { canPerformAction } from "@/lib/permissions";
 
 interface ProjectModalProps {
   isOpen: boolean;
@@ -33,7 +36,8 @@ export default function ProjectModal({
   clientOptions,
   onSubmit,
 }: ProjectModalProps) {
-  // Direct state initialization from props removes the need for useEffect
+  const { role, loading } = useUserRole();
+
   const [title, setTitle] = useState<string>(editingProject?.title || "");
   const [clientId, setClientId] = useState<string>(
     editingProject?.client_id || (clientOptions[0]?.id ?? "")
@@ -53,6 +57,9 @@ export default function ProjectModal({
 
   if (!isOpen) return null;
 
+  const requiredAction = editingProject ? "update" : "create";
+  const hasAccess = canPerformAction(role, "projects", requiredAction);
+
   const handleBudgetChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     const cleanedValue = value.replace(/^0+(?=\d)/, "");
@@ -61,11 +68,10 @@ export default function ProjectModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+    if (!hasAccess) return;
+
     const selectedClientId = clientId || clientOptions[0]?.id;
-    if (!title || !selectedClientId) {
-      return;
-    }
+    if (!title || !selectedClientId) return;
 
     try {
       setIsSubmitting(true);
@@ -110,11 +116,21 @@ export default function ProjectModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        {/* Permission Warning Banner */}
+        {!loading && !hasAccess && (
+          <div className="flex items-center space-x-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl p-3 text-xs text-rose-600 dark:text-rose-400">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+            <span>
+              Permission Denied: Your role ({role}) cannot {editingProject ? "edit" : "create"} projects.
+            </span>
+          </div>
+        )}
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -126,10 +142,11 @@ export default function ProjectModal({
             <input
               type="text"
               required
+              disabled={!hasAccess}
               placeholder="e.g. Website Redesign"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -141,9 +158,10 @@ export default function ProjectModal({
             <div className="relative">
               <select
                 required
+                disabled={!hasAccess}
                 value={clientId}
                 onChange={(e) => setClientId(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer"
+                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <option value="" disabled>
                   Select Client
@@ -166,10 +184,11 @@ export default function ProjectModal({
               <input
                 type="number"
                 min="0"
+                disabled={!hasAccess}
                 placeholder="0"
                 value={budget}
                 onChange={handleBudgetChange}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
             <div>
@@ -179,9 +198,10 @@ export default function ProjectModal({
               <input
                 type="date"
                 required
+                disabled={!hasAccess}
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer"
+                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
           </div>
@@ -199,8 +219,9 @@ export default function ProjectModal({
                   <button
                     key={opt.id}
                     type="button"
+                    disabled={!hasAccess}
                     onClick={() => setStatus(opt.id)}
-                    className={`flex items-center justify-center space-x-1 py-1.5 px-2 rounded-xl border text-[11px] font-semibold transition-all ${
+                    className={`flex items-center justify-center space-x-1 py-1.5 px-2 rounded-xl border text-[11px] font-semibold transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
                       isSelected
                         ? "bg-indigo-600/10 border-indigo-500 text-indigo-600 dark:text-indigo-400"
                         : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 text-slate-500 dark:text-slate-400 hover:border-slate-300"
@@ -219,14 +240,14 @@ export default function ProjectModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition"
+              className="px-4 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-lg shadow-indigo-600/25 transition flex items-center space-x-2 disabled:opacity-50 cursor-pointer"
+              disabled={isSubmitting || !hasAccess || loading}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-lg shadow-indigo-600/25 transition flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               <span>{editingProject ? "Save Changes" : "Create Project"}</span>

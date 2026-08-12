@@ -15,6 +15,9 @@ import {
   FolderKanban,
 } from "lucide-react";
 import { FileItem } from "./types";
+import { PermissionGuard } from "@/components/common/PermissionGuard";
+import { useUserRole } from "@/hooks/useUserRole";
+import { canPerformAction } from "@/lib/permissions";
 
 interface FileListProps {
   files: FileItem[];
@@ -29,6 +32,15 @@ export default function FileList({
   onDelete,
   onUploadClick,
 }: FileListProps) {
+  const { role } = useUserRole();
+
+  const canCreate = canPerformAction(role, "files", "create");
+
+  const handleDelete = (fileName: string) => {
+    if (!canPerformAction(role, "files", "delete")) return;
+    onDelete(fileName);
+  };
+
   const formatBytes = (bytes: number): string => {
     if (bytes === 0) return "0 Bytes";
     const k = 1024;
@@ -54,7 +66,6 @@ export default function FileList({
     return <FileText className="h-4 w-4" />;
   };
 
-  // Forces direct file download instead of browser opening it inline
   const handleDownload = async (publicUrl: string, displayName: string) => {
     try {
       const response = await fetch(publicUrl);
@@ -82,15 +93,21 @@ export default function FileList({
         </div>
       ) : files.length === 0 ? (
         <div
-          onClick={onUploadClick}
-          className="p-12 text-center cursor-pointer group hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition border-2 border-dashed border-transparent hover:border-indigo-500/30 rounded-2xl"
+          onClick={canCreate ? onUploadClick : undefined}
+          className={`p-12 text-center transition border-2 border-dashed border-transparent rounded-2xl ${
+            canCreate
+              ? "cursor-pointer group hover:bg-slate-50/50 dark:hover:bg-slate-800/20 hover:border-indigo-500/30"
+              : ""
+          }`}
         >
           <Folder className="h-10 w-10 text-slate-400 group-hover:text-indigo-500 transition mx-auto mb-3" />
           <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
             No files found in this view
           </p>
           <p className="text-[11px] text-slate-400 mt-1 max-w-sm mx-auto">
-            Click anywhere here or hit the <strong>Upload File</strong> button above to upload project deliverables.
+            {canCreate
+              ? "Click anywhere here or hit the Upload File button above to upload project deliverables."
+              : "No workspace documents or deliverables have been uploaded to this section yet."}
           </p>
         </div>
       ) : (
@@ -129,7 +146,6 @@ export default function FileList({
 
               {/* Action Buttons: View, Download, Delete */}
               <div className="flex items-center space-x-1 sm:space-x-2 shrink-0 ml-4">
-                {/* View Button */}
                 <a
                   href={file.publicUrl}
                   target="_blank"
@@ -140,7 +156,6 @@ export default function FileList({
                   <Eye className="h-4 w-4" />
                 </a>
 
-                {/* Direct Download Button */}
                 <button
                   type="button"
                   suppressHydrationWarning
@@ -151,16 +166,17 @@ export default function FileList({
                   <Download className="h-4 w-4" />
                 </button>
 
-                {/* Delete Button */}
-                <button
-                  type="button"
-                  suppressHydrationWarning
-                  onClick={() => onDelete(file.name)}
-                  className="p-2 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-                  title="Delete File"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                <PermissionGuard module="files" action="delete">
+                  <button
+                    type="button"
+                    suppressHydrationWarning
+                    onClick={() => handleDelete(file.name)}
+                    className="p-2 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                    title="Delete File"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </PermissionGuard>
               </div>
             </div>
           ))}

@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import { X, Loader2, Video, MapPin, Globe, Mail } from "lucide-react";
+import { X, Loader2, Video, MapPin, Globe, Mail, AlertCircle } from "lucide-react";
 import { Meeting, ClientOption, ProjectOption } from "./types";
+import { useUserRole } from "@/hooks/useUserRole";
+import { canPerformAction } from "@/lib/permissions";
 
 interface MeetingModalProps {
   isOpen: boolean;
@@ -34,6 +36,8 @@ export default function MeetingModal({
   projectOptions,
   onSubmit,
 }: MeetingModalProps) {
+  const { role, loading } = useUserRole();
+
   const [clientId, setClientId] = useState<string>(
     editingMeeting?.client_id || ""
   );
@@ -71,13 +75,16 @@ export default function MeetingModal({
 
   if (!isOpen) return null;
 
+  const requiredAction = editingMeeting ? "update" : "create";
+  const hasAccess = canPerformAction(role, "meetings", requiredAction);
+
   const filteredProjects = projectOptions.filter(
     (p) => !effectiveClientId || p.client_id === effectiveClientId
   );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title || !effectiveClientId || !meetingDate || !startTime) return;
+    if (!hasAccess || !title || !effectiveClientId || !meetingDate || !startTime) return;
 
     try {
       setIsSubmitting(true);
@@ -128,12 +135,20 @@ export default function MeetingModal({
           </button>
         </div>
 
-        {/* Scrollable Form Body with Invisible Scrollbar */}
+        {!loading && !hasAccess && (
+          <div className="mt-4 flex items-center space-x-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl p-3 text-xs text-rose-600 dark:text-rose-400 shrink-0">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+            <span>
+              Permission Denied: Your role ({role}) cannot {editingMeeting ? "edit" : "schedule"} meetings.
+            </span>
+          </div>
+        )}
+
+        {/* Scrollable Form Body */}
         <form
           onSubmit={handleSubmit}
           className="space-y-4 overflow-y-auto pt-4 pr-1 scrollbar-none [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
-          {/* Meeting Type Switcher */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
               Meeting Mode
@@ -141,8 +156,9 @@ export default function MeetingModal({
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
+                disabled={!hasAccess}
                 onClick={() => setMeetingType("Online")}
-                className={`flex items-center justify-center space-x-2 py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer ${
+                className={`flex items-center justify-center space-x-2 py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
                   meetingType === "Online"
                     ? "bg-indigo-600/10 border-indigo-500 text-indigo-600 dark:text-indigo-400"
                     : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 text-slate-500 dark:text-slate-400 hover:border-slate-300"
@@ -154,8 +170,9 @@ export default function MeetingModal({
 
               <button
                 type="button"
+                disabled={!hasAccess}
                 onClick={() => setMeetingType("In-Person")}
-                className={`flex items-center justify-center space-x-2 py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer ${
+                className={`flex items-center justify-center space-x-2 py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
                   meetingType === "In-Person"
                     ? "bg-indigo-600/10 border-indigo-500 text-indigo-600 dark:text-indigo-400"
                     : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 text-slate-500 dark:text-slate-400 hover:border-slate-300"
@@ -174,10 +191,11 @@ export default function MeetingModal({
             <input
               type="text"
               required
+              disabled={!hasAccess}
               placeholder="e.g. Website Scope Kick-off Call"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -188,12 +206,13 @@ export default function MeetingModal({
               </label>
               <select
                 required
+                disabled={!hasAccess}
                 value={effectiveClientId}
                 onChange={(e) => {
                   setClientId(e.target.value);
                   setProjectId("");
                 }}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer"
+                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <option value="" disabled>
                   Select Client
@@ -211,9 +230,10 @@ export default function MeetingModal({
                 Linked Project (Optional)
               </label>
               <select
+                disabled={!hasAccess}
                 value={projectId}
                 onChange={(e) => setProjectId(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer"
+                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <option value="">None / General Call</option>
                 {filteredProjects.map((p) => (
@@ -233,9 +253,10 @@ export default function MeetingModal({
               <input
                 type="date"
                 required
+                disabled={!hasAccess}
                 value={meetingDate}
                 onChange={(e) => setMeetingDate(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer"
+                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
 
@@ -246,9 +267,10 @@ export default function MeetingModal({
               <input
                 type="time"
                 required
+                disabled={!hasAccess}
                 value={startTime}
                 onChange={(e) => setStartTime(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer"
+                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
 
@@ -260,14 +282,14 @@ export default function MeetingModal({
                 type="number"
                 min="15"
                 step="15"
+                disabled={!hasAccess}
                 value={durationMinutes}
                 onChange={(e) => setDurationMinutes(Number(e.target.value))}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
           </div>
 
-          {/* Conditional Input Field Based on Meeting Type */}
           {meetingType === "Online" ? (
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -278,10 +300,11 @@ export default function MeetingModal({
               </div>
               <input
                 type="text"
+                disabled={!hasAccess}
                 placeholder="https://meet.google.com/abc-defg-hij"
                 value={meetingLink}
                 onChange={(e) => setMeetingLink(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
           ) : (
@@ -294,10 +317,11 @@ export default function MeetingModal({
               </div>
               <input
                 type="text"
+                disabled={!hasAccess}
                 placeholder="e.g. Starbucks BGC, Building 2 Conference Room..."
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
           )}
@@ -307,9 +331,10 @@ export default function MeetingModal({
               Status
             </label>
             <select
+              disabled={!hasAccess}
               value={status}
               onChange={(e) => setStatus(e.target.value as Meeting["status"])}
-              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer"
+              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <option value="Scheduled">Scheduled</option>
               <option value="Completed">Completed</option>
@@ -323,21 +348,22 @@ export default function MeetingModal({
             </label>
             <textarea
               rows={3}
+              disabled={!hasAccess}
               placeholder="Call agenda or post-meeting summary..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
             />
           </div>
 
-          {/* Client Email Notification Toggle */}
           <div className="pt-1">
             <label className="flex items-center space-x-2.5 cursor-pointer">
               <input
                 type="checkbox"
+                disabled={!hasAccess}
                 checked={notifyClient}
                 onChange={(e) => setNotifyClient(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed"
               />
               <span className="text-xs text-slate-700 dark:text-slate-300 font-medium flex items-center space-x-1.5">
                 <Mail className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
@@ -346,7 +372,6 @@ export default function MeetingModal({
             </label>
           </div>
 
-          {/* Actions Footer */}
           <div className="pt-3 pb-1 flex items-center justify-end space-x-2.5 border-t border-slate-200 dark:border-slate-800/80 shrink-0">
             <button
               type="button"
@@ -357,8 +382,8 @@ export default function MeetingModal({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-lg shadow-indigo-600/25 transition flex items-center space-x-2 disabled:opacity-50 cursor-pointer"
+              disabled={isSubmitting || !hasAccess || loading}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-lg shadow-indigo-600/25 transition flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               <span>{editingMeeting ? "Save Changes" : "Schedule Meeting"}</span>

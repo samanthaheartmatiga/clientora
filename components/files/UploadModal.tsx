@@ -12,6 +12,8 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { ProjectOption } from "./types";
+import { useUserRole } from "@/hooks/useUserRole";
+import { canPerformAction } from "@/lib/permissions";
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -28,6 +30,8 @@ export default function UploadModal({
   onUpload,
   uploading,
 }: UploadModalProps) {
+  const { role, loading } = useUserRole();
+
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [projectId, setProjectId] = useState<string>("");
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
@@ -50,7 +54,10 @@ export default function UploadModal({
 
   if (!isOpen) return null;
 
+  const hasAccess = canPerformAction(role, "files", "create");
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!hasAccess) return;
     if (e.target.files && e.target.files[0]) {
       setSelectedFile(e.target.files[0]);
       setErrorMessage("");
@@ -59,6 +66,8 @@ export default function UploadModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hasAccess) return;
+
     if (!selectedFile) {
       setErrorMessage("Please select a file to upload.");
       return;
@@ -105,6 +114,13 @@ export default function UploadModal({
           </button>
         </div>
 
+        {!loading && !hasAccess && (
+          <div className="m-5 mb-0 flex items-center space-x-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl p-3 text-xs text-rose-600 dark:text-rose-400">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+            <span>Permission Denied: Your role ({role}) cannot upload files.</span>
+          </div>
+        )}
+
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           {errorMessage && (
@@ -114,14 +130,18 @@ export default function UploadModal({
             </div>
           )}
 
-          {/* Native HTML Label for 100% Reliable File Picker on Mobile Web */}
           <label
             htmlFor="file-upload-input"
-            className="block border-2 border-dashed border-slate-200 dark:border-slate-800 hover:border-indigo-500/50 dark:hover:border-indigo-500/50 rounded-2xl p-6 text-center cursor-pointer transition bg-slate-50/50 dark:bg-slate-800/20 group"
+            className={`block border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl p-6 text-center transition bg-slate-50/50 dark:bg-slate-800/20 group ${
+              !hasAccess
+                ? "opacity-60 cursor-not-allowed"
+                : "hover:border-indigo-500/50 dark:hover:border-indigo-500/50 cursor-pointer"
+            }`}
           >
             <input
               id="file-upload-input"
               type="file"
+              disabled={!hasAccess}
               onChange={handleFileChange}
               className="hidden"
             />
@@ -145,7 +165,6 @@ export default function UploadModal({
             )}
           </label>
 
-          {/* Custom Project Selector Popover */}
           <div className="space-y-1.5 relative" ref={dropdownRef}>
             <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 flex items-center space-x-1">
               <FolderKanban className="h-3.5 w-3.5 text-indigo-500" />
@@ -155,9 +174,10 @@ export default function UploadModal({
             <div className="relative">
               <button
                 type="button"
+                disabled={!hasAccess}
                 suppressHydrationWarning
                 onClick={() => setIsProjectDropdownOpen(!isProjectDropdownOpen)}
-                className="w-full flex items-center justify-between bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-slate-200 transition cursor-pointer"
+                className="w-full flex items-center justify-between bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-slate-200 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <span className="truncate">{activeProjectLabel}</span>
                 <ChevronDown
@@ -221,7 +241,6 @@ export default function UploadModal({
             </div>
           </div>
 
-          {/* Modal Footer Actions */}
           <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100 dark:border-slate-800">
             <button
               type="button"
@@ -234,8 +253,8 @@ export default function UploadModal({
             <button
               type="submit"
               suppressHydrationWarning
-              disabled={!selectedFile || uploading}
-              className="inline-flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-400 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-md shadow-indigo-600/20 transition cursor-pointer"
+              disabled={!selectedFile || uploading || !hasAccess || loading}
+              className="inline-flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-400 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-md shadow-indigo-600/20 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {uploading ? (
                 <>

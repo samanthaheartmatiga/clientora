@@ -15,6 +15,9 @@ import {
   Loader2,
 } from "lucide-react";
 import { Project } from "./types";
+import { PermissionGuard } from "@/components/common/PermissionGuard";
+import { useUserRole } from "@/hooks/useUserRole";
+import { canPerformAction } from "@/lib/permissions";
 
 interface ProjectGridProps {
   projects: Project[];
@@ -29,6 +32,7 @@ export default function ProjectGrid({
   onEdit,
   onDelete,
 }: ProjectGridProps) {
+  const { role } = useUserRole();
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -50,6 +54,16 @@ export default function ProjectGrid({
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [activeMenuId]);
+
+  const handleDelete = (id: string) => {
+    if (!canPerformAction(role, "projects", "delete")) return;
+    onDelete(id);
+    setActiveMenuId(null);
+  };
+
+  const canEdit = canPerformAction(role, "projects", "update");
+  const canDelete = canPerformAction(role, "projects", "delete");
+  const hasActions = canEdit || canDelete;
 
   const getStatusBadge = (status: Project["status"]) => {
     switch (status) {
@@ -125,40 +139,44 @@ export default function ProjectGrid({
               </div>
             </div>
 
-            <button
-              onClick={() =>
-                setActiveMenuId(activeMenuId === project.id ? null : project.id)
-              }
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-            >
-              <MoreVertical className="h-4 w-4" />
-            </button>
+            {hasActions && (
+              <button
+                onClick={() =>
+                  setActiveMenuId(activeMenuId === project.id ? null : project.id)
+                }
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+              >
+                <MoreVertical className="h-4 w-4" />
+              </button>
+            )}
 
-            {activeMenuId === project.id && (
+            {hasActions && activeMenuId === project.id && (
               <div
                 ref={menuRef}
                 className="absolute right-4 top-12 z-50 w-28 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xl p-0.5 text-left space-y-0.5"
               >
-                <button
-                  onClick={() => {
-                    onEdit(project);
-                    setActiveMenuId(null);
-                  }}
-                  className="w-full flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                >
-                  <Edit2 className="h-3 w-3 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                  <span>Edit</span>
-                </button>
-                <button
-                  onClick={() => {
-                    onDelete(project.id);
-                    setActiveMenuId(null);
-                  }}
-                  className="w-full flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition"
-                >
-                  <Trash2 className="h-3 w-3 shrink-0" />
-                  <span>Delete</span>
-                </button>
+                <PermissionGuard module="projects" action="update">
+                  <button
+                    onClick={() => {
+                      onEdit(project);
+                      setActiveMenuId(null);
+                    }}
+                    className="w-full flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    <Edit2 className="h-3 w-3 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                    <span>Edit</span>
+                  </button>
+                </PermissionGuard>
+
+                <PermissionGuard module="projects" action="delete">
+                  <button
+                    onClick={() => handleDelete(project.id)}
+                    className="w-full flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
+                  >
+                    <Trash2 className="h-3 w-3 shrink-0" />
+                    <span>Delete</span>
+                  </button>
+                </PermissionGuard>
               </div>
             )}
           </div>

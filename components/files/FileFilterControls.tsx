@@ -71,9 +71,9 @@ export default function FileFilterControls({
           />
         </div>
 
-        {/* Filters Group (No overflow clipping on dropdown container) */}
+        {/* Filters Group */}
         <div className="flex items-center gap-2 min-w-0 w-full sm:w-auto">
-          {/* Project Dropdown - Outside scroll wrapper so popover displays freely */}
+          {/* Project Dropdown */}
           <div className="relative shrink-0 z-50" ref={dropdownRef}>
             <button
               type="button"
@@ -145,7 +145,7 @@ export default function FileFilterControls({
 
           <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 shrink-0" />
 
-          {/* Category Pills - Isolated in horizontal scroll wrapper */}
+          {/* Category Pills */}
           <div className="flex items-center space-x-1 overflow-x-auto no-scrollbar scrollbar-none [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden py-0.5 min-w-0">
             {categories.map((cat) => (
               <button
