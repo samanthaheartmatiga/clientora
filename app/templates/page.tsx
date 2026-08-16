@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, Suspense } from "react";
 import { Plus } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { logWorkspaceActivity } from "@/lib/audit";
 import { Template } from "@/components/templates/types";
 import TemplateGuide from "@/components/templates/TemplateGuide";
 import TemplateControls from "@/components/templates/TemplateControls";
@@ -118,9 +119,17 @@ function TemplatesContent() {
         .update(formData)
         .eq("id", editingTemplate.id);
       error = res.error;
+
+      if (!error) {
+        await logWorkspaceActivity(`Updated Template: ${formData.title}`);
+      }
     } else {
       const res = await supabase.from("templates").insert([formData]);
       error = res.error;
+
+      if (!error) {
+        await logWorkspaceActivity(`Uploaded Template: ${formData.title} (${formData.category})`);
+      }
     }
 
     if (error) {
@@ -132,13 +141,21 @@ function TemplatesContent() {
   };
 
   const handleDeleteTemplate = async (id: string) => {
-    await supabase.from("templates").delete().eq("id", id);
-    setTemplates((prev) => prev.filter((t) => t.id !== id));
+    const targetTemplate = templates.find((t) => t.id === id);
+
+    const { error } = await supabase.from("templates").delete().eq("id", id);
+    if (!error) {
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
+      await logWorkspaceActivity(
+        `Deleted Template: ${targetTemplate?.title || "Template"}`
+      );
+    } else {
+      console.error("Error deleting template:", error.message);
+    }
   };
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
@@ -158,10 +175,8 @@ function TemplatesContent() {
         </button>
       </div>
 
-      {/* Interactive Guide Banner */}
       <TemplateGuide />
 
-      {/* Controls */}
       <TemplateControls
         searchTerm={searchTerm}
         setSearchTerm={setSearchTerm}
@@ -169,7 +184,6 @@ function TemplatesContent() {
         setCategoryFilter={setCategoryFilter}
       />
 
-      {/* Grid */}
       <TemplateGrid
         templates={filteredTemplates}
         loading={loading}
@@ -177,7 +191,6 @@ function TemplatesContent() {
         onDelete={handleDeleteTemplate}
       />
 
-      {/* Upload/Edit Modal */}
       <TemplateModal
         key={editingTemplate ? editingTemplate.id : isModalOpen ? "open" : "closed"}
         isOpen={isModalOpen}

@@ -3,13 +3,13 @@
 import React, { useState, useEffect } from "react";
 import { Plus } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { logWorkspaceActivity } from "@/lib/audit";
 import { Client } from "@/components/clients/types";
 import ClientStats from "@/components/clients/ClientStats";
 import ClientControls from "@/components/clients/ClientControls";
 import ClientTable from "@/components/clients/ClientTable";
 import ClientModal from "@/components/clients/ClientModal";
 
-// Interface for raw Supabase response with joined projects count
 interface DbClientRecord {
   id: string;
   company_name: string;
@@ -19,13 +19,18 @@ interface DbClientRecord {
   projects?: { count: number }[];
 }
 
+interface ClientMutationPayload {
+  company_name: string;
+  contact_email: string;
+  status: "Active" | "Lead" | "Archived";
+}
+
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
 
-  // Modal States
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
 
@@ -65,7 +70,6 @@ export default function ClientsPage() {
 
     loadClientsData();
 
-    // Instant Realtime Listener for both clients and projects changes
     const channel = supabase
       .channel("clients-realtime-channel")
       .on(
@@ -98,7 +102,6 @@ export default function ClientsPage() {
     };
   }, []);
 
-  // Filter Logic
   const filteredClients = clients.filter((client) => {
     const matchesSearch =
       client.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -109,7 +112,6 @@ export default function ClientsPage() {
     return matchesSearch && matchesStatus;
   });
 
-  // Open Modal Handlers
   const handleOpenAddModal = () => {
     setEditingClient(null);
     setIsModalOpen(true);
@@ -120,33 +122,67 @@ export default function ClientsPage() {
     setIsModalOpen(true);
   };
 
-  // Save / Update Handler
-  const handleFormSubmit = async (formData: {
-    company_name: string;
-    contact_email: string;
-    status: "Active" | "Lead" | "Archived";
-  }) => {
-    if (editingClient) {
-      await supabase
-        .from("clients")
-        .update(formData)
-        .eq("id", editingClient.id);
-    } else {
-      await supabase.from("clients").insert([formData]);
-    }
+  const handleFormSubmit = async (formData: ClientMutationPayload) => {
+    try {
+      const payload: ClientMutationPayload = {
+        company_name: formData.company_name,
+        contact_email: formData.contact_email,
+        status: formData.status,
+      };
 
-    setIsModalOpen(false);
+      if (editingClient) {
+        const { error } = await supabase
+          .from("clients")
+          .update(payload)
+          .eq("id", editingClient.id);
+
+        if (error) {
+          console.error("Failed to update client:", error.message);
+          return;
+        }
+
+        let actionDesc = `Updated Client: ${formData.company_name}`;
+        if (editingClient.status !== formData.status) {
+          actionDesc = `Updated Client: ${formData.company_name} (Status: ${editingClient.status} → ${formData.status})`;
+        } else if (editingClient.company_name !== formData.company_name) {
+          actionDesc = `Updated Client: ${editingClient.company_name} → ${formData.company_name}`;
+        }
+
+        await logWorkspaceActivity(actionDesc);
+      } else {
+        const { error } = await supabase.from("clients").insert([payload]);
+
+        if (error) {
+          console.error("Failed to insert client:", error.message);
+          return;
+        }
+
+        await logWorkspaceActivity(`Created Client: ${formData.company_name}`);
+      }
+    } catch (err) {
+      console.error("Submit client error:", err);
+    } finally {
+      setIsModalOpen(false);
+      setEditingClient(null);
+    }
   };
 
-  // Delete Handler
   const handleDeleteClient = async (id: string) => {
-    await supabase.from("clients").delete().eq("id", id);
-    setClients((prev) => prev.filter((c) => c.id !== id));
+    const targetClient = clients.find((c) => c.id === id);
+
+    const { error } = await supabase.from("clients").delete().eq("id", id);
+    if (!error) {
+      setClients((prev) => prev.filter((c) => c.id !== id));
+      await logWorkspaceActivity(
+        `Deleted Client: ${targetClient?.company_name || "Client Record"}`
+      );
+    } else {
+      console.error("Failed to delete client:", error.message);
+    }
   };
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
@@ -158,17 +194,15 @@ export default function ClientsPage() {
         </div>
         <button
           onClick={handleOpenAddModal}
-          className="inline-flex items-center justify-center space-x-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-lg shadow-indigo-600/20 transition"
+          className="inline-flex items-center justify-center space-x-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-lg shadow-indigo-600/20 transition cursor-pointer"
         >
           <Plus className="h-4 w-4" />
           <span>Add Client</span>
         </button>
       </div>
 
-      {/* KPI Stats Bar */}
       <ClientStats clients={clients} />
 
-      {/* Search & Filter Controls */}
       <ClientControls
         searchTerm={searchTerm}
         setSearchTerm={setSearchTerm}
@@ -176,7 +210,6 @@ export default function ClientsPage() {
         setStatusFilter={setStatusFilter}
       />
 
-      {/* Clients Table */}
       <ClientTable
         clients={filteredClients}
         loading={loading}
@@ -184,11 +217,13 @@ export default function ClientsPage() {
         onDelete={handleDeleteClient}
       />
 
-      {/* Add / Edit Modal */}
       <ClientModal
         key={editingClient ? editingClient.id : isModalOpen ? "open" : "closed"}
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingClient(null);
+        }}
         editingClient={editingClient}
         onSubmit={handleFormSubmit}
       />

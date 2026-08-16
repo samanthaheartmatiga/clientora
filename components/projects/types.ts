@@ -1,9 +1,15 @@
 export interface Project {
   id: string;
-  name: string;
-  client_name: string;
-  status: "In Progress" | "Completed" | "On Hold";
+  client_id: string;
+  company_name?: string;
+  title: string;
+  status: "Planning" | "In Progress" | "Review" | "Completed";
   budget: number;
   due_date: string;
   created_at?: string;
+}
+
+export interface ClientOption {
+  id: string;
+  company_name: string;
 }

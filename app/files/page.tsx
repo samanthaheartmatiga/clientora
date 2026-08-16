@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Upload } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { logWorkspaceActivity } from "@/lib/audit";
 
 import { FileItem, FileCategory, ProjectOption } from "@/components/files/types";
 import FileGuideBanner from "@/components/files/FileGuideBanner";
@@ -130,7 +131,6 @@ export default function FilesPage() {
     }
   }, []);
 
-  // Initialize Data + Live WebSockets Realtime Listener
   useEffect(() => {
     async function init() {
       await fetchProjects();
@@ -138,7 +138,6 @@ export default function FilesPage() {
     }
     init();
 
-    // Subscribe to real-time additions and removals on project_files
     const realtimeChannel = supabase
       .channel("realtime-project-files")
       .on(
@@ -175,7 +174,6 @@ export default function FilesPage() {
         return;
       }
 
-      // Insert DB record (triggers Realtime across all active devices)
       const { error: dbInsertError } = await supabase
         .from("project_files")
         .insert([
@@ -191,6 +189,10 @@ export default function FilesPage() {
         console.error("Project link error:", dbInsertError.message);
       }
 
+      const matchedProj = projectOptions.find((p) => p.id === uploadProjectId);
+      const projSuffix = matchedProj ? ` (Project: ${matchedProj.title})` : "";
+      await logWorkspaceActivity(`Uploaded File: ${file.name}${projSuffix}`);
+
       await fetchFiles();
     } catch (err) {
       console.error("Error uploading file:", err);
@@ -200,12 +202,16 @@ export default function FilesPage() {
   };
 
   const handleDeleteFile = async (fileName: string) => {
+    const targetFile = files.find((f) => f.name === fileName);
     try {
-      // Optimistic update
       setFiles((prev) => prev.filter((f) => f.name !== fileName));
 
       await supabase.storage.from("files").remove([fileName]);
       await supabase.from("project_files").delete().eq("file_path", fileName);
+
+      await logWorkspaceActivity(
+        `Deleted File: ${targetFile?.displayName || fileName}`
+      );
 
       await fetchFiles();
     } catch (err) {
@@ -242,7 +248,6 @@ export default function FilesPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 w-full">
         <div className="w-full sm:w-auto">
           <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">

@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, Suspense } from "react";
 import { Plus } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { logWorkspaceActivity } from "@/lib/audit";
 import { getNextInvoiceNumber } from "@/lib/invoices";
 import { Invoice, ClientOption } from "@/components/invoices/types";
 import InvoiceStats from "@/components/invoices/InvoiceStats";
@@ -188,6 +189,8 @@ function InvoicesContent() {
   };
 
   const handleStatusChange = async (id: string, newStatus: Invoice["status"]) => {
+    const targetInvoice = invoices.find((inv) => inv.id === id);
+
     setInvoices((prev) =>
       prev.map((inv) => (inv.id === id ? { ...inv, status: newStatus } : inv))
     );
@@ -200,6 +203,10 @@ function InvoicesContent() {
     if (error) {
       console.error("Error updating invoice status:", error.message);
       await refetchInvoices();
+    } else if (targetInvoice) {
+      await logWorkspaceActivity(
+        `Updated Invoice: ${targetInvoice.invoice_number} (Status: ${targetInvoice.status} → ${newStatus})`
+      );
     }
   };
 
@@ -223,6 +230,14 @@ function InvoicesContent() {
         .update(updatePayload)
         .eq("id", editingInvoice.id);
       error = res.error;
+
+      if (!error) {
+        let actionDesc = `Updated Invoice: ${editingInvoice.invoice_number}`;
+        if (editingInvoice.status !== formData.status) {
+          actionDesc = `Updated Invoice: ${editingInvoice.invoice_number} (Status: ${editingInvoice.status} → ${formData.status})`;
+        }
+        await logWorkspaceActivity(actionDesc);
+      }
     } else {
       const insertPayload = {
         client_id: formData.client_id,
@@ -233,6 +248,10 @@ function InvoicesContent() {
       };
       const res = await supabase.from("invoices").insert([insertPayload]);
       error = res.error;
+
+      if (!error) {
+        await logWorkspaceActivity(`Generated Invoice: ${formData.invoice_number}`);
+      }
     }
 
     if (error) {
@@ -244,8 +263,17 @@ function InvoicesContent() {
   };
 
   const handleDeleteInvoice = async (id: string) => {
-    await supabase.from("invoices").delete().eq("id", id);
-    setInvoices((prev) => prev.filter((inv) => inv.id !== id));
+    const targetInvoice = invoices.find((inv) => inv.id === id);
+
+    const { error } = await supabase.from("invoices").delete().eq("id", id);
+    if (!error) {
+      setInvoices((prev) => prev.filter((inv) => inv.id !== id));
+      await logWorkspaceActivity(
+        `Deleted Invoice: ${targetInvoice?.invoice_number || "Invoice Record"}`
+      );
+    } else {
+      console.error("Error deleting invoice:", error.message);
+    }
   };
 
   return (

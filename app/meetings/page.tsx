@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, Suspense } from "react";
 import { Plus } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { logWorkspaceActivity } from "@/lib/audit";
 import {
   Meeting,
   ClientOption,
@@ -217,6 +218,8 @@ function MeetingsContent() {
     id: string,
     newStatus: Meeting["status"]
   ) => {
+    const targetMeeting = meetings.find((m) => m.id === id);
+
     setMeetings((prev) =>
       prev.map((m) => (m.id === id ? { ...m, status: newStatus } : m))
     );
@@ -229,6 +232,10 @@ function MeetingsContent() {
     if (error) {
       console.error("Error updating meeting status:", error.message);
       await refetchMeetings();
+    } else if (targetMeeting) {
+      await logWorkspaceActivity(
+        `Updated Meeting: ${targetMeeting.title} (Status: ${targetMeeting.status} → ${newStatus})`
+      );
     }
   };
 
@@ -265,6 +272,19 @@ function MeetingsContent() {
 
       error = res.error;
       if (res.data) savedMeetingId = res.data.id;
+
+      if (!error) {
+        let actionDesc = `Updated Meeting: ${formData.title}`;
+        if (
+          editingMeeting.meeting_date !== formData.meeting_date ||
+          editingMeeting.start_time !== formData.start_time
+        ) {
+          actionDesc = `Rescheduled Meeting: ${formData.title} to ${formData.meeting_date} at ${formData.start_time}`;
+        } else if (editingMeeting.status !== formData.status) {
+          actionDesc = `Updated Meeting: ${formData.title} (Status: ${editingMeeting.status} → ${formData.status})`;
+        }
+        await logWorkspaceActivity(actionDesc);
+      }
     } else {
       const res = await supabase
         .from("meetings")
@@ -274,6 +294,12 @@ function MeetingsContent() {
 
       error = res.error;
       if (res.data) savedMeetingId = res.data.id;
+
+      if (!error) {
+        await logWorkspaceActivity(
+          `Scheduled Meeting: ${formData.title} (${formData.meeting_date} ${formData.start_time})`
+        );
+      }
     }
 
     if (error) {
@@ -380,13 +406,19 @@ function MeetingsContent() {
       }
     }
 
-    await supabase.from("meetings").delete().eq("id", id);
-    setMeetings((prev) => prev.filter((m) => m.id !== id));
+    const { error } = await supabase.from("meetings").delete().eq("id", id);
+    if (!error) {
+      setMeetings((prev) => prev.filter((m) => m.id !== id));
+      await logWorkspaceActivity(
+        `Cancelled Meeting: ${meetingToDelete?.title || "Meeting"}`
+      );
+    } else {
+      console.error("Error deleting meeting:", error.message);
+    }
   };
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
@@ -406,10 +438,8 @@ function MeetingsContent() {
         </button>
       </div>
 
-      {/* Guide Banner */}
       <MeetingGuide />
 
-      {/* Controls */}
       <MeetingControls
         searchTerm={searchTerm}
         setSearchTerm={setSearchTerm}
@@ -417,7 +447,6 @@ function MeetingsContent() {
         setStatusFilter={setStatusFilter}
       />
 
-      {/* Grid */}
       <MeetingGrid
         meetings={filteredMeetings}
         loading={loading}
@@ -426,7 +455,6 @@ function MeetingsContent() {
         onStatusChange={handleStatusChange}
       />
 
-      {/* Modal */}
       <MeetingModal
         key={editingMeeting ? editingMeeting.id : isModalOpen ? "open" : "closed"}
         isOpen={isModalOpen}

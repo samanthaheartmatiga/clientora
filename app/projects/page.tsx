@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, Suspense } from "react";
+import React, { useState, useEffect, useCallback, Suspense } from "react";
 import { Plus } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { logWorkspaceActivity } from "@/lib/audit";
 import { getNextInvoiceNumber } from "@/lib/invoices";
 import { Project, ClientOption } from "@/components/projects/types";
 import ProjectStats from "@/components/projects/ProjectStats";
@@ -16,8 +17,9 @@ interface DbProjectRecord {
   title: string;
   status: Project["status"];
   budget: number | string;
-  due_date: string;
+  due_date: string | null;
   created_at?: string;
+  updated_at?: string;
   clients?: {
     company_name: string;
   } | null;
@@ -34,54 +36,91 @@ function ProjectsContent() {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
 
-  useEffect(() => {
-    let isMounted = true;
+  const fetchProjectsData = useCallback(async () => {
+    try {
+      const { data: clientsData, error: clientsError } = await supabase
+        .from("clients")
+        .select("id, company_name")
+        .order("company_name", { ascending: true });
 
-    async function loadData() {
+      if (clientsError) {
+        console.error("Error fetching client options:", clientsError.message);
+      } else if (clientsData) {
+        setClientOptions(clientsData as ClientOption[]);
+      }
+
+      const { data: projectsData, error: projectsError } = await supabase
+        .from("projects")
+        .select("*, clients(company_name)")
+        .order("created_at", { ascending: false });
+
+      if (projectsError) {
+        console.error("Error fetching projects:", projectsError.message);
+      } else if (projectsData) {
+        const formatted: Project[] = (
+          projectsData as unknown as DbProjectRecord[]
+        ).map((p) => ({
+          id: p.id,
+          client_id: p.client_id,
+          company_name: p.clients?.company_name || "Unassigned",
+          title: p.title,
+          status: p.status,
+          budget: Number(p.budget),
+          due_date: p.due_date || "",
+          created_at: p.created_at,
+        }));
+        setProjects(formatted);
+      }
+    } catch (err) {
+      console.error("Connection error:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let ignore = false;
+
+    async function initialize() {
       try {
-        const { data: clientsData, error: clientsError } = await supabase
+        const { data: clientsData } = await supabase
           .from("clients")
           .select("id, company_name")
           .order("company_name", { ascending: true });
 
-        if (clientsError) {
-          console.error("Error fetching client options:", clientsError.message);
-        } else if (isMounted && clientsData) {
-          setClientOptions(clientsData as ClientOption[]);
-        }
-
-        const { data: projectsData, error: projectsError } = await supabase
+        const { data: projectsData } = await supabase
           .from("projects")
           .select("*, clients(company_name)")
           .order("created_at", { ascending: false });
 
-        if (projectsError) {
-          console.error("Error fetching projects:", projectsError.message);
-        } else if (isMounted && projectsData) {
-          const formatted: Project[] = (
-            projectsData as unknown as DbProjectRecord[]
-          ).map((p) => ({
-            id: p.id,
-            client_id: p.client_id,
-            company_name: p.clients?.company_name || "Unassigned",
-            title: p.title,
-            status: p.status,
-            budget: Number(p.budget),
-            due_date: p.due_date,
-            created_at: p.created_at,
-          }));
-          setProjects(formatted);
+        if (!ignore) {
+          if (clientsData) setClientOptions(clientsData as ClientOption[]);
+          if (projectsData) {
+            const formatted: Project[] = (
+              projectsData as unknown as DbProjectRecord[]
+            ).map((p) => ({
+              id: p.id,
+              client_id: p.client_id,
+              company_name: p.clients?.company_name || "Unassigned",
+              title: p.title,
+              status: p.status,
+              budget: Number(p.budget),
+              due_date: p.due_date || "",
+              created_at: p.created_at,
+            }));
+            setProjects(formatted);
+          }
+          setLoading(false);
         }
       } catch (err) {
-        console.error("Connection error:", err);
-      } finally {
-        if (isMounted) {
+        if (!ignore) {
+          console.error("Init projects error:", err);
           setLoading(false);
         }
       }
     }
 
-    loadData();
+    initialize();
 
     const channel = supabase
       .channel("realtime-projects-page")
@@ -89,46 +128,23 @@ function ProjectsContent() {
         "postgres_changes",
         { event: "*", schema: "public", table: "projects" },
         () => {
-          loadData();
+          if (!ignore) fetchProjectsData();
         }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "clients" },
         () => {
-          loadData();
+          if (!ignore) fetchProjectsData();
         }
       )
       .subscribe();
 
     return () => {
-      isMounted = false;
+      ignore = true;
       supabase.removeChannel(channel);
     };
-  }, []);
-
-  const refetchProjects = async () => {
-    const { data: projectsData } = await supabase
-      .from("projects")
-      .select("*, clients(company_name)")
-      .order("created_at", { ascending: false });
-
-    if (projectsData) {
-      const formatted: Project[] = (
-        projectsData as unknown as DbProjectRecord[]
-      ).map((p) => ({
-        id: p.id,
-        client_id: p.client_id,
-        company_name: p.clients?.company_name || "Unassigned",
-        title: p.title,
-        status: p.status,
-        budget: Number(p.budget),
-        due_date: p.due_date,
-        created_at: p.created_at,
-      }));
-      setProjects(formatted);
-    }
-  };
+  }, [fetchProjectsData]);
 
   const filteredProjects = projects.filter((project) => {
     const matchesSearch =
@@ -158,100 +174,151 @@ function ProjectsContent() {
     budget: number;
     due_date: string;
   }) => {
-    const payload = {
-      client_id: formData.client_id,
-      title: formData.title,
-      status: formData.status,
-      budget: Number(formData.budget) || 0,
-      due_date: formData.due_date || null,
-    };
-
-    if (editingProject) {
-      // 1. Update existing project
-      const { error: updateError } = await supabase
-        .from("projects")
-        .update(payload)
-        .eq("id", editingProject.id);
-
-      if (updateError) {
-        console.error("Supabase Error saving project:", updateError.message);
-        return;
-      }
-
-      // 2. Sync linked Invoice row
-      const { data: existingInvoices } = await supabase
-        .from("invoices")
-        .select("id")
-        .eq("project_id", editingProject.id);
-
-      if (existingInvoices && existingInvoices.length > 0) {
-        await supabase
-          .from("invoices")
-          .update({
-            client_id: payload.client_id,
-            amount: payload.budget,
-            due_date: payload.due_date,
-          })
-          .eq("id", existingInvoices[0].id);
-      } else if (payload.budget > 0) {
-        const nextInvNumber = await getNextInvoiceNumber(supabase);
-        await supabase.from("invoices").insert([
-          {
-            project_id: editingProject.id,
-            client_id: payload.client_id,
-            invoice_number: nextInvNumber,
-            amount: payload.budget,
-            status: "Pending",
-            due_date: payload.due_date,
-          },
-        ]);
-      }
-    } else {
-      // 1. Create new project and select returned ID
-      const { data: createdProject, error: insertError } = await supabase
-        .from("projects")
-        .insert([payload])
-        .select("id")
-        .single();
-
-      if (insertError) {
-        console.error("Supabase Error saving project:", insertError.message);
-        return;
-      }
-
-      // 2. Automatically generate associated invoice with next sequential invoice number if budget > 0
-      if (createdProject?.id && payload.budget > 0) {
-        const nextInvNumber = await getNextInvoiceNumber(supabase);
-
-        const { error: invoiceError } = await supabase.from("invoices").insert([
-          {
-            project_id: createdProject.id,
-            client_id: payload.client_id,
-            invoice_number: nextInvNumber,
-            amount: payload.budget,
-            status: "Pending",
-            due_date: payload.due_date,
-          },
-        ]);
-
-        if (invoiceError) {
-          console.error("Error creating associated invoice:", invoiceError.message);
-        }
-      }
+    if (!formData.client_id || formData.client_id.trim() === "") {
+      console.error("Validation Error: Client is required.");
+      return;
     }
 
-    setIsModalOpen(false);
-    await refetchProjects();
+    const formattedDueDate =
+      formData.due_date && formData.due_date.trim() !== ""
+        ? formData.due_date
+        : null;
+
+    const fallbackInvoiceDueDate =
+      formattedDueDate || new Date().toISOString().split("T")[0];
+
+    const nowIsoString = new Date().toISOString();
+
+    try {
+      if (editingProject) {
+        const updatePayload = {
+          client_id: formData.client_id,
+          title: formData.title.trim(),
+          status: formData.status,
+          budget: Number(formData.budget) || 0,
+          due_date: formattedDueDate,
+          updated_at: nowIsoString,
+        };
+
+        const { error: updateError } = await supabase
+          .from("projects")
+          .update(updatePayload)
+          .eq("id", editingProject.id);
+
+        if (updateError) {
+          console.error("Supabase error updating project:", updateError.message);
+          return;
+        }
+
+        const { data: existingInvoices } = await supabase
+          .from("invoices")
+          .select("id")
+          .eq("project_id", editingProject.id);
+
+        if (existingInvoices && existingInvoices.length > 0) {
+          await supabase
+            .from("invoices")
+            .update({
+              client_id: updatePayload.client_id,
+              amount: updatePayload.budget,
+              due_date: fallbackInvoiceDueDate,
+              updated_at: nowIsoString,
+            })
+            .eq("id", existingInvoices[0].id);
+        } else if (updatePayload.budget > 0) {
+          const nextInvNumber = await getNextInvoiceNumber(supabase);
+          await supabase.from("invoices").insert([
+            {
+              project_id: editingProject.id,
+              client_id: updatePayload.client_id,
+              invoice_number: nextInvNumber,
+              amount: updatePayload.budget,
+              status: "Pending",
+              due_date: fallbackInvoiceDueDate,
+              updated_at: nowIsoString,
+            },
+          ]);
+        }
+
+        let actionDesc = `Updated Project: ${formData.title}`;
+        if (editingProject.status !== formData.status) {
+          actionDesc = `Updated Project: ${formData.title} (Status: ${editingProject.status} → ${formData.status})`;
+        }
+        await logWorkspaceActivity(actionDesc);
+      } else {
+        const insertPayload = {
+          client_id: formData.client_id,
+          title: formData.title.trim(),
+          status: formData.status,
+          budget: Number(formData.budget) || 0,
+          due_date: formattedDueDate,
+          updated_at: nowIsoString,
+        };
+
+        const { data: createdProject, error: insertError } = await supabase
+          .from("projects")
+          .insert([insertPayload])
+          .select("id")
+          .single();
+
+        if (insertError) {
+          console.error("Supabase error creating project:", insertError.message);
+          return;
+        }
+
+        if (createdProject?.id && insertPayload.budget > 0) {
+          try {
+            const nextInvNumber = await getNextInvoiceNumber(supabase);
+            const { error: invoiceError } = await supabase.from("invoices").insert([
+              {
+                project_id: createdProject.id,
+                client_id: insertPayload.client_id,
+                invoice_number: nextInvNumber,
+                amount: insertPayload.budget,
+                status: "Pending",
+                due_date: fallbackInvoiceDueDate,
+                updated_at: nowIsoString,
+              },
+            ]);
+
+            if (invoiceError) {
+              console.error("Error creating linked invoice:", invoiceError.message);
+            }
+          } catch (invErr) {
+            console.error("Invoice generation error:", invErr);
+          }
+        }
+
+        await logWorkspaceActivity(`Created Project: ${formData.title}`);
+      }
+
+      setIsModalOpen(false);
+      await fetchProjectsData();
+    } catch (err) {
+      console.error("Submit project error:", err);
+    }
   };
 
   const handleDeleteProject = async (id: string) => {
-    await supabase.from("projects").delete().eq("id", id);
-    setProjects((prev) => prev.filter((p) => p.id !== id));
+    const targetProject = projects.find((p) => p.id === id);
+
+    try {
+      const { error } = await supabase.from("projects").delete().eq("id", id);
+      if (!error) {
+        setProjects((prev) => prev.filter((p) => p.id !== id));
+        await logWorkspaceActivity(
+          `Deleted Project: ${targetProject?.title || "Project Record"}`
+        );
+      } else {
+        console.error("Failed to delete project:", error.message);
+      }
+    } catch (err) {
+      console.error("Delete project error:", err);
+    }
   };
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
@@ -271,10 +338,8 @@ function ProjectsContent() {
         </button>
       </div>
 
-      {/* Stats */}
       <ProjectStats projects={projects} />
 
-      {/* Controls */}
       <ProjectControls
         searchTerm={searchTerm}
         setSearchTerm={setSearchTerm}
@@ -282,7 +347,6 @@ function ProjectsContent() {
         setStatusFilter={setStatusFilter}
       />
 
-      {/* Grid */}
       <ProjectGrid
         projects={filteredProjects}
         loading={loading}
@@ -290,7 +354,6 @@ function ProjectsContent() {
         onDelete={handleDeleteProject}
       />
 
-      {/* Modal */}
       <ProjectModal
         key={editingProject ? editingProject.id : isModalOpen ? "open" : "closed"}
         isOpen={isModalOpen}

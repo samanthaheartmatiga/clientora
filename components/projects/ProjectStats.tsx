@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { FolderKanban, Clock, CheckCircle2, Search } from "lucide-react";
+import { FolderKanban, Compass, Clock, FileSearch, CheckCircle2 } from "lucide-react";
 import { Project } from "./types";
 
 interface ProjectStatsProps {
@@ -24,9 +24,9 @@ export default function ProjectStats({ projects }: ProjectStatsProps) {
       bg: "bg-indigo-500/10 border-indigo-500/20",
     },
     {
-      label: "Planning & Review",
-      value: planning + review,
-      icon: Search,
+      label: "Planning",
+      value: planning,
+      icon: Compass,
       color: "text-blue-600 dark:text-blue-400",
       bg: "bg-blue-500/10 border-blue-500/20",
     },
@@ -38,6 +38,13 @@ export default function ProjectStats({ projects }: ProjectStatsProps) {
       bg: "bg-amber-500/10 border-amber-500/20",
     },
     {
+      label: "Review",
+      value: review,
+      icon: FileSearch,
+      color: "text-purple-600 dark:text-purple-400",
+      bg: "bg-purple-500/10 border-purple-500/20",
+    },
+    {
       label: "Completed",
       value: completed,
       icon: CheckCircle2,
@@ -47,7 +54,7 @@ export default function ProjectStats({ projects }: ProjectStatsProps) {
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
       {stats.map((stat, idx) => {
         const Icon = stat.icon;
         return (
@@ -55,8 +62,8 @@ export default function ProjectStats({ projects }: ProjectStatsProps) {
             key={idx}
             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 shadow-sm dark:shadow-xl flex items-center justify-between transition-colors duration-200"
           >
-            <div className="space-y-1">
-              <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            <div className="space-y-1 min-w-0">
+              <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate">
                 {stat.label}
               </p>
               <p className={`text-xl font-bold tracking-tight ${stat.color}`}>
@@ -64,7 +71,7 @@ export default function ProjectStats({ projects }: ProjectStatsProps) {
               </p>
             </div>
             <div
-              className={`h-10 w-10 rounded-xl ${stat.bg} border flex items-center justify-center shrink-0`}
+              className={`h-10 w-10 rounded-xl ${stat.bg} border flex items-center justify-center shrink-0 ml-2`}
             >
               <Icon className={`h-5 w-5 ${stat.color}`} />
             </div>
