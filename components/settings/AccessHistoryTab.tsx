@@ -15,7 +15,7 @@ import {
   Activity,
   Search,
 } from "lucide-react";
-import { createClient } from "@/app/supabase/client";
+import { supabase } from "@/lib/supabaseClient";
 
 export interface AuditLogItem {
   id: string;
@@ -42,12 +42,10 @@ interface RawAuditLogRow {
 const emptySubscribe = () => () => {};
 
 export default function AccessHistoryTab() {
-  const supabase = createClient();
   const [logs, setLogs] = useState<AuditLogItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Filter States
   const [searchTerm, setSearchTerm] = useState("");
   const [actionFilter, setActionFilter] = useState("All");
 
@@ -67,12 +65,10 @@ export default function AccessHistoryTab() {
 
       if (error) {
         console.error("Audit log error:", error.message);
-        setLogs([]);
         return;
       }
 
       const rows = (data || []) as RawAuditLogRow[];
-
       const formatted: AuditLogItem[] = rows.map((log) => ({
         id: log.id,
         user_id: log.user_id,
@@ -87,59 +83,36 @@ export default function AccessHistoryTab() {
       setLogs(formatted);
     } catch (err) {
       console.error("Audit fetch exception:", err);
-      setLogs([]);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
-    let ignore = false;
+    let isMounted = true;
 
-    async function initializeLogs() {
-      try {
-        const { data, error } = await supabase
-          .from("audit_logs")
-          .select("id, user_id, user_name, user_email, action, device_info, ip_address, created_at")
-          .order("created_at", { ascending: false })
-          .limit(100);
-
-        if (!ignore) {
-          if (error) {
-            console.error("Audit log error:", error.message);
-            setLogs([]);
-          } else {
-            const rows = (data || []) as RawAuditLogRow[];
-            const formatted: AuditLogItem[] = rows.map((log) => ({
-              id: log.id,
-              user_id: log.user_id,
-              full_name: log.user_name || "Workspace Member",
-              email: log.user_email || "member@clientora.com",
-              action: log.action,
-              device_info: log.device_info,
-              ip_address: log.ip_address,
-              created_at: log.created_at,
-            }));
-            setLogs(formatted);
-          }
-          setIsLoading(false);
-        }
-      } catch (err) {
-        if (!ignore) {
-          console.error("Audit fetch exception:", err);
-          setLogs([]);
-          setIsLoading(false);
-        }
-      }
+    async function init() {
+      await fetchAccessLogs();
     }
+    init();
 
-    initializeLogs();
+    const channel = supabase
+      .channel("realtime-audit-logs-history-tab")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "audit_logs" },
+        () => {
+          if (isMounted) fetchAccessLogs();
+        }
+      )
+      .subscribe();
 
     return () => {
-      ignore = true;
+      isMounted = false;
+      supabase.removeChannel(channel);
     };
-  }, [supabase]);
+  }, [fetchAccessLogs]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -223,7 +196,6 @@ export default function AccessHistoryTab() {
     return <Globe className="h-3.5 w-3.5" />;
   };
 
-  // Filter computation
   const filteredLogs = logs.filter((log) => {
     const matchesSearch =
       log.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -236,7 +208,9 @@ export default function AccessHistoryTab() {
     return matchesSearch && matchesAction;
   });
 
-  const mostRecentLog = logs.length > 0 ? logs[0] : null;
+  const showHighlightCard = actionFilter === "All" && searchTerm === "" && filteredLogs.length > 0;
+  const mostRecentLog = showHighlightCard ? filteredLogs[0] : null;
+  const listLogs = showHighlightCard ? filteredLogs.slice(1) : filteredLogs;
 
   if (isLoading) {
     return (
@@ -249,7 +223,6 @@ export default function AccessHistoryTab() {
 
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-6 md:p-8 shadow-sm space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-5">
         <div>
           <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -263,6 +236,7 @@ export default function AccessHistoryTab() {
 
         <button
           type="button"
+          suppressHydrationWarning
           onClick={handleRefresh}
           disabled={isRefreshing}
           className="inline-flex items-center space-x-1.5 self-start sm:self-auto bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 text-xs font-medium px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 transition cursor-pointer disabled:opacity-50"
@@ -272,7 +246,6 @@ export default function AccessHistoryTab() {
         </button>
       </div>
 
-      {/* Filter Controls */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
         <div className="relative w-full sm:w-80">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
@@ -289,6 +262,8 @@ export default function AccessHistoryTab() {
           {["All", "Created", "Updated", "Deleted", "Activity"].map((filter) => (
             <button
               key={filter}
+              type="button"
+              suppressHydrationWarning
               onClick={() => setActionFilter(filter)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer shrink-0 ${
                 actionFilter === filter
@@ -308,8 +283,7 @@ export default function AccessHistoryTab() {
         </div>
       ) : (
         <div className="space-y-4">
-          {/* Most Recent Active Highlight Card */}
-          {mostRecentLog && actionFilter === "All" && searchTerm === "" && (
+          {mostRecentLog && (
             <div className="relative overflow-hidden rounded-2xl border border-indigo-100 dark:border-indigo-900/40 bg-linear-to-r from-indigo-50/70 via-indigo-50/30 to-purple-50/40 dark:from-indigo-950/40 dark:via-slate-900/60 dark:to-slate-900/90 p-4 md:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="flex items-center space-x-3.5">
                 <div className="h-11 w-11 rounded-xl bg-indigo-600 text-white font-bold text-sm flex items-center justify-center shadow-sm shrink-0">
@@ -353,55 +327,55 @@ export default function AccessHistoryTab() {
             </div>
           )}
 
-          {/* Scannable Aligned List */}
-          <div className="divide-y divide-slate-100 dark:divide-slate-800 rounded-2xl border border-slate-100 dark:border-slate-800/80 bg-slate-50/40 dark:bg-slate-950/40 overflow-hidden">
-            {filteredLogs.map((log) => (
-              <div
-                key={log.id}
-                className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
-              >
-                <div className="flex items-start sm:items-center gap-3.5">
-                  {/* Dedicated fixed-width badge column for aligned display */}
-                  <div className="pt-0.5 sm:pt-0">
-                    {getActionBadge(log.action)}
+          {listLogs.length > 0 && (
+            <div className="divide-y divide-slate-100 dark:divide-slate-800 rounded-2xl border border-slate-100 dark:border-slate-800/80 bg-slate-50/40 dark:bg-slate-950/40 overflow-hidden">
+              {listLogs.map((log) => (
+                <div
+                  key={log.id}
+                  className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                >
+                  <div className="flex items-start sm:items-center gap-3.5">
+                    <div className="pt-0.5 sm:pt-0">
+                      {getActionBadge(log.action)}
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <div className="flex items-center space-x-2 text-xs">
+                        <span className="font-bold text-slate-900 dark:text-white">
+                          {log.full_name}
+                        </span>
+                        <span className="text-slate-400 text-[11px]">•</span>
+                        <span className="text-slate-500 dark:text-slate-400 text-[11px]">
+                          {log.email}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 dark:text-slate-300">
+                        {log.action}
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="space-y-0.5">
-                    <div className="flex items-center space-x-2 text-xs">
-                      <span className="font-bold text-slate-900 dark:text-white">
-                        {log.full_name}
-                      </span>
-                      <span className="text-slate-400 text-[11px]">•</span>
-                      <span className="text-slate-500 dark:text-slate-400 text-[11px]">
-                        {log.email}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 dark:text-slate-300">
-                      {log.action}
-                    </p>
+                  <div className="flex items-center space-x-3 text-xs text-slate-500 dark:text-slate-400 shrink-0 self-end sm:self-auto">
+                    {log.device_info && (
+                      <div className="flex items-center space-x-1 text-[11px] bg-white dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-200/60 dark:border-slate-700/60">
+                        {getDeviceIcon(log.device_info)}
+                        <span>{log.device_info}</span>
+                      </div>
+                    )}
+                    <span suppressHydrationWarning className="text-[11px] font-medium text-slate-500 dark:text-slate-400 min-w-16 text-right">
+                      {formatTimeAgo(log.created_at)}
+                    </span>
                   </div>
                 </div>
+              ))}
+            </div>
+          )}
 
-                <div className="flex items-center space-x-3 text-xs text-slate-500 dark:text-slate-400 shrink-0 self-end sm:self-auto">
-                  {log.device_info && (
-                    <div className="flex items-center space-x-1 text-[11px] bg-white dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-200/60 dark:border-slate-700/60">
-                      {getDeviceIcon(log.device_info)}
-                      <span>{log.device_info}</span>
-                    </div>
-                  )}
-                  <span suppressHydrationWarning className="text-[11px] font-medium text-slate-500 dark:text-slate-400 min-w-16 text-right">
-                    {formatTimeAgo(log.created_at)}
-                  </span>
-                </div>
-              </div>
-            ))}
-
-            {filteredLogs.length === 0 && (
-              <div className="py-8 text-center text-xs text-slate-400 italic">
-                No logs match your filter criteria.
-              </div>
-            )}
-          </div>
+          {filteredLogs.length === 0 && (
+            <div className="py-8 text-center text-xs text-slate-400 italic">
+              No logs match your filter criteria.
+            </div>
+          )}
         </div>
       )}
     </div>

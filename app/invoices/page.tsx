@@ -40,6 +40,55 @@ function InvoicesContent() {
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [nextInvoiceNum, setNextInvoiceNum] = useState<string>("INV-0001");
 
+  const syncOverdueInvoices = async (records: DbInvoiceRecord[]): Promise<DbInvoiceRecord[]> => {
+    const todayStr = new Date().toISOString().split("T")[0];
+    const overdueList = records.filter(
+      (inv) => inv.status === "Pending" && inv.due_date && inv.due_date < todayStr
+    );
+
+    if (overdueList.length === 0) return records;
+
+    const updatedRecords = [...records];
+
+    for (const inv of overdueList) {
+      await supabase
+        .from("invoices")
+        .update({ status: "Overdue" })
+        .eq("id", inv.id);
+
+      const { data: existingNotif } = await supabase
+        .from("notifications")
+        .select("id")
+        .eq("link", "/invoices")
+        .ilike("message", `%${inv.invoice_number}%`)
+        .maybeSingle();
+
+      if (!existingNotif) {
+        await supabase.from("notifications").insert([
+          {
+            title: "Invoice Overdue",
+            message: `Invoice ${inv.invoice_number} for ${
+              inv.clients?.company_name || "Client"
+            } ($${Number(inv.amount).toLocaleString()}) is past its due date (${inv.due_date}).`,
+            type: "warning",
+            link: "/invoices",
+            read: false,
+          },
+        ]);
+      }
+
+      const targetIdx = updatedRecords.findIndex((r) => r.id === inv.id);
+      if (targetIdx !== -1) {
+        updatedRecords[targetIdx] = {
+          ...updatedRecords[targetIdx],
+          status: "Overdue",
+        };
+      }
+    }
+
+    return updatedRecords;
+  };
+
   const refetchInvoices = useCallback(async () => {
     try {
       const { data: clientsData, error: clientsError } = await supabase
@@ -61,9 +110,11 @@ function InvoicesContent() {
       if (invoicesError) {
         console.error("Error fetching invoices:", invoicesError.message);
       } else if (rawInvoices) {
-        const formatted: Invoice[] = (
+        const syncedRecords = await syncOverdueInvoices(
           rawInvoices as unknown as DbInvoiceRecord[]
-        ).map((inv) => ({
+        );
+
+        const formatted: Invoice[] = syncedRecords.map((inv) => ({
           id: inv.id,
           client_id: inv.client_id,
           project_id: inv.project_id,
@@ -106,9 +157,11 @@ function InvoicesContent() {
         if (invoicesError) {
           console.error("Error fetching invoices:", invoicesError.message);
         } else if (isMounted && rawInvoices) {
-          const formatted: Invoice[] = (
+          const syncedRecords = await syncOverdueInvoices(
             rawInvoices as unknown as DbInvoiceRecord[]
-          ).map((inv) => ({
+          );
+
+          const formatted: Invoice[] = syncedRecords.map((inv) => ({
             id: inv.id,
             client_id: inv.client_id,
             project_id: inv.project_id,
@@ -288,6 +341,7 @@ function InvoicesContent() {
           </p>
         </div>
         <button
+          type="button"
           suppressHydrationWarning
           onClick={handleOpenAddModal}
           className="inline-flex items-center justify-center space-x-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-lg shadow-indigo-600/20 transition cursor-pointer"

@@ -4,7 +4,6 @@ import React, { useState, useEffect, useMemo } from "react";
 import { Shield, ChevronDown, Check, Loader2, AlertCircle } from "lucide-react";
 import { createClient } from "@/app/supabase/client";
 
-// ROLE PERMISSION TYPES & DEFINITIONS
 export type AppRole = "superadmin" | "admin" | "member" | "viewer";
 
 export interface RoleConfig {
@@ -49,7 +48,6 @@ export function hasPermission(userRole: AppRole, minRequiredRole: AppRole): bool
   return (ROLES[userRole]?.level ?? 1) >= (ROLES[minRequiredRole]?.level ?? 1);
 }
 
-// COMPONENT INTERFACES
 interface RegisteredUser {
   id: string;
   full_name: string | null;
@@ -78,49 +76,50 @@ export default function TeamDirectoryTab() {
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState("");
 
-  // Load Users & Role safely inside useEffect
   useEffect(() => {
     let isMounted = true;
 
     async function loadUsersAndRole() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
 
-      if (user && isMounted) {
-        setCurrentUserId(user.id);
+        if (user && isMounted) {
+          setCurrentUserId(user.id);
 
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", user.id)
-          .maybeSingle();
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("role")
+            .eq("id", user.id)
+            .maybeSingle();
 
-        if (profile?.role && isMounted) {
-          setCurrentUserRole(profile.role as AppRole);
+          if (profile?.role && isMounted) {
+            setCurrentUserRole(profile.role as AppRole);
+          }
         }
-      }
 
-      const { data: profiles, error } = await supabase
-        .from("profiles")
-        .select("id, full_name, email, role, created_at")
-        .order("created_at", { ascending: true });
+        const { data: profiles, error } = await supabase
+          .from("profiles")
+          .select("id, full_name, email, role, created_at")
+          .order("created_at", { ascending: true });
 
-      if (!error && profiles && isMounted) {
-        const typedProfiles = profiles as ProfileRow[];
-        setUsersList(
-          typedProfiles.map((p) => ({
-            id: p.id,
-            full_name: p.full_name,
-            email: p.email,
-            role: (p.role as AppRole) || "viewer",
-            created_at: p.created_at,
-          }))
-        );
-      }
-
-      if (isMounted) {
-        setIsLoading(false);
+        if (!error && profiles && isMounted) {
+          const typedProfiles = profiles as ProfileRow[];
+          setUsersList(
+            typedProfiles.map((p) => ({
+              id: p.id,
+              full_name: p.full_name,
+              email: p.email,
+              role: (p.role as AppRole) || "viewer",
+              created_at: p.created_at,
+            }))
+          );
+        }
+      } catch (err) {
+        console.error("Failed to load users:", err);
+      } finally {
+        if (isMounted) setIsLoading(false);
       }
     }
 
@@ -142,19 +141,16 @@ export default function TeamDirectoryTab() {
 
     const targetUser = usersList.find((u) => u.id === targetUserId);
 
-    // GUARDRAIL 1: Admin/Operations cannot alter a Super Admin's role
     if (currentUserRole === "admin" && targetUser?.role === "superadmin") {
       setUpdateError("Access Denied: Admin / Operations cannot alter the role of a Super Admin.");
       return;
     }
 
-    // GUARDRAIL 2: Admin/Operations cannot assign the Super Admin role
     if (currentUserRole === "admin" && newRole === "superadmin") {
       setUpdateError("Access Denied: Admin / Operations cannot assign the Super Admin role.");
       return;
     }
 
-    // GUARDRAIL 3: Prevent demoting the last remaining Super Admin
     const superAdminCount = usersList.filter((u) => u.role === "superadmin").length;
     if (targetUser?.role === "superadmin" && newRole !== "superadmin" && superAdminCount <= 1) {
       setUpdateError("Cannot demote the only Super Admin. Assign another Super Admin first.");
@@ -163,7 +159,6 @@ export default function TeamDirectoryTab() {
 
     setUpdatingUserId(targetUserId);
 
-    // Perform update and request returned count using .select()
     const { data, error } = await supabase
       .from("profiles")
       .update({ role: newRole })
@@ -199,7 +194,6 @@ export default function TeamDirectoryTab() {
 
   return (
     <div className="space-y-5">
-      {/* Header Info */}
       <div className="border-b border-slate-100 dark:border-slate-800 pb-3">
         <h2 className="text-sm font-bold text-slate-900 dark:text-white">
           Team Directory & Role Assignment
@@ -209,7 +203,6 @@ export default function TeamDirectoryTab() {
         </p>
       </div>
 
-      {/* ERROR FEEDBACK BANNER */}
       {updateError && (
         <div className="flex items-center space-x-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl p-3 text-xs text-rose-600 dark:text-rose-400">
           <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
@@ -217,7 +210,6 @@ export default function TeamDirectoryTab() {
         </div>
       )}
 
-      {/* REGISTERED USERS TABLE LIST */}
       <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200/80 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900">
         {usersList.length > 0 ? (
           usersList.map((user) => {
@@ -231,7 +223,6 @@ export default function TeamDirectoryTab() {
             const isSelf = user.id === currentUserId;
             const roleConf = ROLES[user.role] || ROLES.viewer;
 
-            // Admin cannot edit a Super Admin target
             const isTargetSuperAdmin = user.role === "superadmin";
             const canEditThisUser =
               isUserAdminOrSuperadmin &&
@@ -242,7 +233,6 @@ export default function TeamDirectoryTab() {
                 key={user.id}
                 className="p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 first:rounded-t-2xl last:rounded-b-2xl hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition"
               >
-                {/* User Identity Details */}
                 <div className="flex items-center space-x-3">
                   <div className="h-9 w-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800/60 flex items-center justify-center text-xs font-bold text-indigo-600 dark:text-indigo-400 shrink-0">
                     {initials}
@@ -264,7 +254,6 @@ export default function TeamDirectoryTab() {
                   </div>
                 </div>
 
-                {/* Role Assignment Dropdown */}
                 <div className="relative shrink-0 self-start sm:self-auto">
                   {canEditThisUser ? (
                     <div>
@@ -286,11 +275,9 @@ export default function TeamDirectoryTab() {
                         )}
                       </button>
 
-                      {/* Role Options Dropdown */}
                       {openDropdownId === user.id && (
                         <div className="absolute right-0 top-full mt-1.5 w-56 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl z-50 p-2 space-y-1">
                           {(Object.keys(ROLES) as AppRole[]).map((rKey) => {
-                            // Hide "superadmin" option if logged-in user is Admin / Operations
                             if (currentUserRole === "admin" && rKey === "superadmin") {
                               return null;
                             }
