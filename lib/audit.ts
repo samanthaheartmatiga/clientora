@@ -1,5 +1,4 @@
-import { supabase } from "@/lib/supabaseClient";
-import { createClient as createBrowserClient } from "@/app/supabase/client";
+import { createClient } from "@/app/supabase/client";
 
 interface AuditLogRow {
   user_id: string | null;
@@ -11,86 +10,50 @@ interface AuditLogRow {
 }
 
 export async function logWorkspaceActivity(actionDescription: string): Promise<void> {
-  const browserClient = createBrowserClient();
+  const supabase = createClient();
 
   try {
-    let userId: string | null = null;
-    let userEmail = "";
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const userId: string | null = user?.id ?? null;
+    let userEmail: string = user?.email ?? "";
     let userName = "";
 
-    // 1. Try browser SSR client
-    const { data: userData } = await browserClient.auth.getUser();
-    if (userData?.user) {
-      userId = userData.user.id;
-      userEmail = userData.user.email || "";
-      userName =
-        userData.user.user_metadata?.full_name ||
-        userData.user.user_metadata?.name ||
-        "";
-    }
-
-    // 2. Try legacy client if missing
-    if (!userId) {
-      const { data: legacyData } = await supabase.auth.getUser();
-      if (legacyData?.user) {
-        userId = legacyData.user.id;
-        userEmail = legacyData.user.email || "";
-        userName =
-          legacyData.user.user_metadata?.full_name ||
-          legacyData.user.user_metadata?.name ||
-          "";
-      }
-    }
-
-    // 3. Fallback: Parse auth token directly from browser cookie
-    if (!userId && typeof document !== "undefined") {
-      const cookieMatch = document.cookie.match(/sb-[a-z0-9]+-auth-token=([^;]+)/i);
-      if (cookieMatch?.[1]) {
-        try {
-          const raw = decodeURIComponent(cookieMatch[1]);
-          const parsed = JSON.parse(
-            raw.startsWith("base64-") ? atob(raw.replace("base64-", "")) : raw
-          );
-          const u = parsed.user || parsed.currentSession?.user || parsed[0]?.user;
-          if (u) {
-            userId = u.id || null;
-            userEmail = u.email || "";
-            userName =
-              u.user_metadata?.full_name ||
-              u.user_metadata?.name ||
-              "";
-          }
-        } catch {
-          // Token decode fallback
-        }
-      }
-    }
-
-    // 4. Query public.profiles using the active user ID
+    // 1. ALWAYS query profiles table FIRST to get the most recent name
     if (userId) {
-      const { data: profile } = await browserClient
+      const { data: profile } = await supabase
         .from("profiles")
         .select("full_name, email")
         .eq("id", userId)
         .maybeSingle();
 
       if (profile?.full_name?.trim()) {
-        userName = profile.full_name;
+        userName = profile.full_name.trim();
       }
-      if (profile?.email?.trim() && !userEmail) {
-        userEmail = profile.email;
+      if (profile?.email?.trim()) {
+        userEmail = profile.email.trim();
       }
     }
 
-    // 5. Fallback formatting
+    // 2. Fallback to auth user metadata if profile table didn't have it
+    if (!userName && user) {
+      userName =
+        user.user_metadata?.full_name ||
+        user.user_metadata?.name ||
+        "";
+    }
+
+    // 3. Fallback to email prefix
     if (!userName && userEmail) {
       userName = userEmail.split("@")[0];
     }
 
-    const finalName = userName?.trim() || "Workspace Member";
-    const finalEmail = userEmail?.trim() || "member@clientora.com";
+    const finalName = userName && userName.trim() !== "" ? userName : "Workspace Member";
+    const finalEmail = userEmail && userEmail.trim() !== "" ? userEmail : "member@clientora.com";
 
-    // 6. Device information
+    // 4. Device detection
     const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
     let device = "Desktop Browser";
     if (/iPhone|iPad|iPod/i.test(ua)) device = "Safari on iOS";
@@ -107,10 +70,10 @@ export async function logWorkspaceActivity(actionDescription: string): Promise<v
       ip_address: "127.0.0.1",
     };
 
-    const { error } = await browserClient.from("audit_logs").insert([payload]);
+    const { error } = await supabase.from("audit_logs").insert([payload]);
 
     if (error) {
-      await browserClient.from("audit_logs").insert([
+      await supabase.from("audit_logs").insert([
         {
           ...payload,
           user_id: null,
@@ -118,6 +81,6 @@ export async function logWorkspaceActivity(actionDescription: string): Promise<v
       ]);
     }
   } catch (err) {
-    console.error("Error logging workspace activity:", err);
+    console.error("Error in logWorkspaceActivity:", err);
   }
 }

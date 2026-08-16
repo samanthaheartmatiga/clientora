@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useSyncExternalStore } from "react";
+import React, { useState, useEffect, useCallback, useSyncExternalStore, useMemo } from "react";
 import {
   Clock,
   Laptop,
@@ -15,7 +15,7 @@ import {
   Activity,
   Search,
 } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { createClient } from "@/app/supabase/client";
 
 export interface AuditLogItem {
   id: string;
@@ -39,9 +39,17 @@ interface RawAuditLogRow {
   created_at: string;
 }
 
+interface ProfileMapItem {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+}
+
 const emptySubscribe = () => () => {};
 
 export default function AccessHistoryTab() {
+  const supabase = useMemo(() => createClient(), []);
+
   const [logs, setLogs] = useState<AuditLogItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -57,28 +65,52 @@ export default function AccessHistoryTab() {
 
   const fetchAccessLogs = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from("audit_logs")
-        .select("id, user_id, user_name, user_email, action, device_info, ip_address, created_at")
-        .order("created_at", { ascending: false })
-        .limit(100);
+      // 1. Fetch audit logs and profiles in parallel using the authenticated client
+      const [logsRes, profilesRes] = await Promise.all([
+        supabase
+          .from("audit_logs")
+          .select("id, user_id, user_name, user_email, action, device_info, ip_address, created_at")
+          .order("created_at", { ascending: false })
+          .limit(100),
+        supabase
+          .from("profiles")
+          .select("id, full_name, email"),
+      ]);
 
-      if (error) {
-        console.error("Audit log error:", error.message);
+      if (logsRes.error) {
+        console.error("Audit log error:", logsRes.error.message);
         return;
       }
 
-      const rows = (data || []) as RawAuditLogRow[];
-      const formatted: AuditLogItem[] = rows.map((log) => ({
-        id: log.id,
-        user_id: log.user_id,
-        full_name: log.user_name || "Workspace Member",
-        email: log.user_email || "member@clientora.com",
-        action: log.action,
-        device_info: log.device_info,
-        ip_address: log.ip_address,
-        created_at: log.created_at,
-      }));
+      // 2. Build dictionary of current profile info
+      const profileMap = new Map<string, { full_name: string; email: string }>();
+      if (profilesRes.data) {
+        (profilesRes.data as ProfileMapItem[]).forEach((p) => {
+          profileMap.set(p.id, {
+            full_name: p.full_name?.trim() || "",
+            email: p.email?.trim() || "",
+          });
+        });
+      }
+
+      // 3. Map logs so all historical records reflect the current user's profile name
+      const rows = (logsRes.data || []) as RawAuditLogRow[];
+      const formatted: AuditLogItem[] = rows.map((log) => {
+        const liveProfile = log.user_id ? profileMap.get(log.user_id) : null;
+        const resolvedName = liveProfile?.full_name || log.user_name || "Workspace Member";
+        const resolvedEmail = liveProfile?.email || log.user_email || "member@clientora.com";
+
+        return {
+          id: log.id,
+          user_id: log.user_id,
+          full_name: resolvedName,
+          email: resolvedEmail,
+          action: log.action,
+          device_info: log.device_info,
+          ip_address: log.ip_address,
+          created_at: log.created_at,
+        };
+      });
 
       setLogs(formatted);
     } catch (err) {
@@ -87,7 +119,7 @@ export default function AccessHistoryTab() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, []);
+  }, [supabase]);
 
   useEffect(() => {
     let isMounted = true;
@@ -106,13 +138,20 @@ export default function AccessHistoryTab() {
           if (isMounted) fetchAccessLogs();
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "profiles" },
+        () => {
+          if (isMounted) fetchAccessLogs();
+        }
+      )
       .subscribe();
 
     return () => {
       isMounted = false;
       supabase.removeChannel(channel);
     };
-  }, [fetchAccessLogs]);
+  }, [fetchAccessLogs, supabase]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
