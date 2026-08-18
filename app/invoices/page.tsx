@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, Suspense } from "react";
+import React, { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { Plus } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { createClient } from "@/app/supabase/client";
+import { useWorkspace } from "@/context/WorkspaceContext";
 import { logWorkspaceActivity } from "@/lib/audit";
 import { getNextInvoiceNumber } from "@/lib/invoices";
 import { Invoice, ClientOption } from "@/components/invoices/types";
@@ -13,6 +14,7 @@ import InvoiceModal from "@/components/invoices/InvoiceModal";
 
 interface DbInvoiceRecord {
   id: string;
+  organization_id?: string | null;
   client_id: string;
   project_id?: string | null;
   invoice_number: string;
@@ -29,6 +31,10 @@ interface DbInvoiceRecord {
 }
 
 function InvoicesContent() {
+  const supabase = useMemo(() => createClient(), []);
+  const { currentOrg } = useWorkspace();
+  const currentOrgId = currentOrg?.id;
+
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -40,60 +46,71 @@ function InvoicesContent() {
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [nextInvoiceNum, setNextInvoiceNum] = useState<string>("INV-0001");
 
-  const syncOverdueInvoices = async (records: DbInvoiceRecord[]): Promise<DbInvoiceRecord[]> => {
-    const todayStr = new Date().toISOString().split("T")[0];
-    const overdueList = records.filter(
-      (inv) => inv.status === "Pending" && inv.due_date && inv.due_date < todayStr
-    );
+  const syncOverdueInvoices = useCallback(
+    async (records: DbInvoiceRecord[]): Promise<DbInvoiceRecord[]> => {
+      const todayStr = new Date().toISOString().split("T")[0];
+      const overdueList = records.filter(
+        (inv) => inv.status === "Pending" && inv.due_date && inv.due_date < todayStr
+      );
 
-    if (overdueList.length === 0) return records;
+      if (overdueList.length === 0) return records;
 
-    const updatedRecords = [...records];
+      const updatedRecords = [...records];
 
-    for (const inv of overdueList) {
-      await supabase
-        .from("invoices")
-        .update({ status: "Overdue" })
-        .eq("id", inv.id);
+      for (const inv of overdueList) {
+        await supabase
+          .from("invoices")
+          .update({ status: "Overdue" })
+          .eq("id", inv.id);
 
-      const { data: existingNotif } = await supabase
-        .from("notifications")
-        .select("id")
-        .eq("link", "/invoices")
-        .ilike("message", `%${inv.invoice_number}%`)
-        .maybeSingle();
+        const { data: existingNotif } = await supabase
+          .from("notifications")
+          .select("id")
+          .eq("link", "/invoices")
+          .ilike("message", `%${inv.invoice_number}%`)
+          .maybeSingle();
 
-      if (!existingNotif) {
-        await supabase.from("notifications").insert([
-          {
-            title: "Invoice Overdue",
-            message: `Invoice ${inv.invoice_number} for ${
-              inv.clients?.company_name || "Client"
-            } ($${Number(inv.amount).toLocaleString()}) is past its due date (${inv.due_date}).`,
-            type: "warning",
-            link: "/invoices",
-            read: false,
-          },
-        ]);
+        if (!existingNotif) {
+          await supabase.from("notifications").insert([
+            {
+              title: "Invoice Overdue",
+              message: `Invoice ${inv.invoice_number} for ${
+                inv.clients?.company_name || "Client"
+              } ($${Number(inv.amount).toLocaleString()}) is past its due date (${inv.due_date}).`,
+              type: "warning",
+              link: "/invoices",
+              read: false,
+            },
+          ]);
+        }
+
+        const targetIdx = updatedRecords.findIndex((r) => r.id === inv.id);
+        if (targetIdx !== -1) {
+          updatedRecords[targetIdx] = {
+            ...updatedRecords[targetIdx],
+            status: "Overdue",
+          };
+        }
       }
 
-      const targetIdx = updatedRecords.findIndex((r) => r.id === inv.id);
-      if (targetIdx !== -1) {
-        updatedRecords[targetIdx] = {
-          ...updatedRecords[targetIdx],
-          status: "Overdue",
-        };
-      }
-    }
-
-    return updatedRecords;
-  };
+      return updatedRecords;
+    },
+    [supabase]
+  );
 
   const refetchInvoices = useCallback(async () => {
+    if (!currentOrgId) {
+      setClientOptions([]);
+      setInvoices([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data: clientsData, error: clientsError } = await supabase
         .from("clients")
         .select("id, company_name")
+        .eq("organization_id", currentOrgId)
         .order("company_name", { ascending: true });
 
       if (clientsError) {
@@ -105,6 +122,7 @@ function InvoicesContent() {
       const { data: rawInvoices, error: invoicesError } = await supabase
         .from("invoices")
         .select("*, clients(company_name), projects(title)")
+        .eq("organization_id", currentOrgId)
         .order("created_at", { ascending: false });
 
       if (invoicesError) {
@@ -130,83 +148,59 @@ function InvoicesContent() {
       }
     } catch (err) {
       console.error("Connection error:", err);
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [supabase, currentOrgId, syncOverdueInvoices]);
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadData() {
-      try {
-        const { data: clientsData, error: clientsError } = await supabase
-          .from("clients")
-          .select("id, company_name")
-          .order("company_name", { ascending: true });
-
-        if (clientsError) {
-          console.error("Error fetching clients:", clientsError.message);
-        } else if (isMounted && clientsData) {
-          setClientOptions(clientsData as ClientOption[]);
-        }
-
-        const { data: rawInvoices, error: invoicesError } = await supabase
-          .from("invoices")
-          .select("*, clients(company_name), projects(title)")
-          .order("created_at", { ascending: false });
-
-        if (invoicesError) {
-          console.error("Error fetching invoices:", invoicesError.message);
-        } else if (isMounted && rawInvoices) {
-          const syncedRecords = await syncOverdueInvoices(
-            rawInvoices as unknown as DbInvoiceRecord[]
-          );
-
-          const formatted: Invoice[] = syncedRecords.map((inv) => ({
-            id: inv.id,
-            client_id: inv.client_id,
-            project_id: inv.project_id,
-            company_name: inv.clients?.company_name || "Unassigned",
-            project_title: inv.projects?.title || undefined,
-            invoice_number: inv.invoice_number,
-            amount: Number(inv.amount),
-            status: inv.status,
-            due_date: inv.due_date,
-            created_at: inv.created_at,
-          }));
-          setInvoices(formatted);
-        }
-      } catch (err) {
-        console.error("Connection error:", err);
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+      if (isMounted) {
+        await refetchInvoices();
       }
     }
+    void loadData();
 
-    loadData();
+    if (!currentOrgId) return;
 
     const channel = supabase
-      .channel("realtime-invoices-sync")
+      .channel(`realtime-invoices-sync-${currentOrgId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "invoices" },
+        {
+          event: "*",
+          schema: "public",
+          table: "invoices",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          if (isMounted) loadData();
+          if (isMounted) void refetchInvoices();
         }
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "projects" },
+        {
+          event: "*",
+          schema: "public",
+          table: "projects",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          if (isMounted) loadData();
+          if (isMounted) void refetchInvoices();
         }
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "clients" },
+        {
+          event: "*",
+          schema: "public",
+          table: "clients",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          if (isMounted) loadData();
+          if (isMounted) void refetchInvoices();
         }
       )
       .subscribe();
@@ -215,7 +209,7 @@ function InvoicesContent() {
       isMounted = false;
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [refetchInvoices, supabase, currentOrgId]);
 
   const filteredInvoices = invoices.filter((inv) => {
     const matchesSearch =
@@ -242,6 +236,7 @@ function InvoicesContent() {
   };
 
   const handleStatusChange = async (id: string, newStatus: Invoice["status"]) => {
+    if (!currentOrgId) return;
     const targetInvoice = invoices.find((inv) => inv.id === id);
 
     setInvoices((prev) =>
@@ -251,14 +246,16 @@ function InvoicesContent() {
     const { error } = await supabase
       .from("invoices")
       .update({ status: newStatus })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("organization_id", currentOrgId);
 
     if (error) {
       console.error("Error updating invoice status:", error.message);
       await refetchInvoices();
     } else if (targetInvoice) {
       await logWorkspaceActivity(
-        `Updated Invoice: ${targetInvoice.invoice_number} (Status: ${targetInvoice.status} → ${newStatus})`
+        `Updated Invoice: ${targetInvoice.invoice_number} (Status: ${targetInvoice.status} → ${newStatus})`,
+        currentOrgId
       );
     }
   };
@@ -270,7 +267,9 @@ function InvoicesContent() {
     status: Invoice["status"];
     due_date: string;
   }) => {
+    if (!currentOrgId) return;
     let error;
+
     if (editingInvoice) {
       const updatePayload = {
         client_id: formData.client_id,
@@ -281,7 +280,8 @@ function InvoicesContent() {
       const res = await supabase
         .from("invoices")
         .update(updatePayload)
-        .eq("id", editingInvoice.id);
+        .eq("id", editingInvoice.id)
+        .eq("organization_id", currentOrgId);
       error = res.error;
 
       if (!error) {
@@ -289,10 +289,11 @@ function InvoicesContent() {
         if (editingInvoice.status !== formData.status) {
           actionDesc = `Updated Invoice: ${editingInvoice.invoice_number} (Status: ${editingInvoice.status} → ${formData.status})`;
         }
-        await logWorkspaceActivity(actionDesc);
+        await logWorkspaceActivity(actionDesc, currentOrgId);
       }
     } else {
       const insertPayload = {
+        organization_id: currentOrgId,
         client_id: formData.client_id,
         invoice_number: formData.invoice_number,
         amount: formData.amount,
@@ -303,7 +304,7 @@ function InvoicesContent() {
       error = res.error;
 
       if (!error) {
-        await logWorkspaceActivity(`Generated Invoice: ${formData.invoice_number}`);
+        await logWorkspaceActivity(`Generated Invoice: ${formData.invoice_number}`, currentOrgId);
       }
     }
 
@@ -316,13 +317,20 @@ function InvoicesContent() {
   };
 
   const handleDeleteInvoice = async (id: string) => {
+    if (!currentOrgId) return;
     const targetInvoice = invoices.find((inv) => inv.id === id);
 
-    const { error } = await supabase.from("invoices").delete().eq("id", id);
+    const { error } = await supabase
+      .from("invoices")
+      .delete()
+      .eq("id", id)
+      .eq("organization_id", currentOrgId);
+
     if (!error) {
       setInvoices((prev) => prev.filter((inv) => inv.id !== id));
       await logWorkspaceActivity(
-        `Deleted Invoice: ${targetInvoice?.invoice_number || "Invoice Record"}`
+        `Deleted Invoice: ${targetInvoice?.invoice_number || "Invoice Record"}`,
+        currentOrgId
       );
     } else {
       console.error("Error deleting invoice:", error.message);
@@ -337,7 +345,10 @@ function InvoicesContent() {
             Billing & Invoices
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Monitor client billing history, pending payments, and revenue collection.
+            Monitor client billing history, pending payments, and revenue collection for{" "}
+            <span className="font-semibold text-slate-700 dark:text-slate-200">
+              {currentOrg?.name || "current workspace"}
+            </span>.
           </p>
         </div>
         <button

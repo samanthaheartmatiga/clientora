@@ -54,13 +54,13 @@ export default function ProjectStats({ projects }: ProjectStatsProps) {
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
       {stats.map((stat, idx) => {
         const Icon = stat.icon;
         return (
           <div
             key={idx}
-            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 shadow-sm dark:shadow-xl flex items-center justify-between transition-colors duration-200"
+            className="last:col-span-2 sm:last:col-span-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 shadow-sm dark:shadow-xl flex items-center justify-between transition-colors duration-200"
           >
             <div className="space-y-1 min-w-0">
               <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate">

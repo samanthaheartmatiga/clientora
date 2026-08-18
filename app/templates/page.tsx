@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, Suspense } from "react";
+import React, { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { Plus } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { createClient } from "@/app/supabase/client";
+import { useWorkspace } from "@/context/WorkspaceContext";
 import { logWorkspaceActivity } from "@/lib/audit";
 import { Template } from "@/components/templates/types";
 import TemplateGuide from "@/components/templates/TemplateGuide";
@@ -11,6 +12,10 @@ import TemplateGrid from "@/components/templates/TemplateGrid";
 import TemplateModal from "@/components/templates/TemplateModal";
 
 function TemplatesContent() {
+  const supabase = useMemo(() => createClient(), []);
+  const { currentOrg } = useWorkspace();
+  const currentOrgId = currentOrg?.id;
+
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -21,10 +26,17 @@ function TemplatesContent() {
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
 
   const refetchTemplates = useCallback(async () => {
+    if (!currentOrgId) {
+      setTemplates([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data, error } = await supabase
         .from("templates")
         .select("*")
+        .eq("organization_id", currentOrgId)
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -37,41 +49,32 @@ function TemplatesContent() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [supabase, currentOrgId]);
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadData() {
-      try {
-        const { data, error } = await supabase
-          .from("templates")
-          .select("*")
-          .order("created_at", { ascending: false });
-
-        if (error) {
-          console.error("Error fetching templates:", error.message);
-        } else if (isMounted && data) {
-          setTemplates(data as Template[]);
-        }
-      } catch (err) {
-        console.error("Connection error:", err);
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+      if (isMounted) {
+        await refetchTemplates();
       }
     }
+    void loadData();
 
-    loadData();
+    if (!currentOrgId) return;
 
     const channel = supabase
-      .channel("realtime-templates-sync")
+      .channel(`realtime-templates-sync-${currentOrgId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "templates" },
+        {
+          event: "*",
+          schema: "public",
+          table: "templates",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          if (isMounted) loadData();
+          if (isMounted) void refetchTemplates();
         }
       )
       .subscribe();
@@ -80,7 +83,7 @@ function TemplatesContent() {
       isMounted = false;
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [refetchTemplates, supabase, currentOrgId]);
 
   const filteredTemplates = templates.filter((tpl) => {
     const matchesSearch =
@@ -112,23 +115,31 @@ function TemplatesContent() {
     file_name: string;
     file_size?: number | null;
   }) => {
+    if (!currentOrgId) return;
     let error;
+
     if (editingTemplate) {
       const res = await supabase
         .from("templates")
         .update(formData)
-        .eq("id", editingTemplate.id);
+        .eq("id", editingTemplate.id)
+        .eq("organization_id", currentOrgId);
       error = res.error;
 
       if (!error) {
-        await logWorkspaceActivity(`Updated Template: ${formData.title}`);
+        await logWorkspaceActivity(`Updated Template: ${formData.title}`, currentOrgId);
       }
     } else {
-      const res = await supabase.from("templates").insert([formData]);
+      const res = await supabase
+        .from("templates")
+        .insert([{ ...formData, organization_id: currentOrgId }]);
       error = res.error;
 
       if (!error) {
-        await logWorkspaceActivity(`Uploaded Template: ${formData.title} (${formData.category})`);
+        await logWorkspaceActivity(
+          `Uploaded Template: ${formData.title} (${formData.category})`,
+          currentOrgId
+        );
       }
     }
 
@@ -141,13 +152,20 @@ function TemplatesContent() {
   };
 
   const handleDeleteTemplate = async (id: string) => {
+    if (!currentOrgId) return;
     const targetTemplate = templates.find((t) => t.id === id);
 
-    const { error } = await supabase.from("templates").delete().eq("id", id);
+    const { error } = await supabase
+      .from("templates")
+      .delete()
+      .eq("id", id)
+      .eq("organization_id", currentOrgId);
+
     if (!error) {
       setTemplates((prev) => prev.filter((t) => t.id !== id));
       await logWorkspaceActivity(
-        `Deleted Template: ${targetTemplate?.title || "Template"}`
+        `Deleted Template: ${targetTemplate?.title || "Template"}`,
+        currentOrgId
       );
     } else {
       console.error("Error deleting template:", error.message);
@@ -162,7 +180,10 @@ function TemplatesContent() {
             Document Templates
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Store and download reusable Word docs, contract files, and client onboarding materials.
+            Store and download reusable Word docs, contract files, and client onboarding materials for{" "}
+            <span className="font-semibold text-slate-700 dark:text-slate-200">
+              {currentOrg?.name || "current workspace"}
+            </span>.
           </p>
         </div>
         <button

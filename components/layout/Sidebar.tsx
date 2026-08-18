@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { 
   LayoutDashboard, 
@@ -51,11 +52,18 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen }: SidebarPr
           isExpanded ? "w-60 p-4" : "w-16 p-3"
         }`}
       >
-        <div className="space-y-4">
+        <div className="space-y-6">
           {/* Brand Header */}
           <div className="flex items-center space-x-3 px-0.5">
-            <div className="h-9 w-9 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-white text-xs shadow-md shadow-indigo-500/20 shrink-0">
-              CO
+            <div className="h-9 w-9 rounded-xl overflow-hidden flex items-center justify-center shrink-0">
+              <Image
+                src="/clientoralogonobg.png"
+                alt="ClientOra Logo"
+                width={36}
+                height={36}
+                className="h-full w-full object-contain"
+                priority
+              />
             </div>
             {isExpanded && (
               <span className="text-sm font-bold text-white dark:text-slate-900 tracking-tight whitespace-nowrap transition-opacity duration-200">
@@ -66,6 +74,11 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen }: SidebarPr
 
           {/* Main Navigation */}
           <div className="space-y-1">
+            {isExpanded && (
+              <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 dark:text-indigo-600 px-3 pt-1 pb-2">
+                Main
+              </p>
+            )}
             {mainNavigation.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.href;
@@ -88,7 +101,12 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen }: SidebarPr
           </div>
 
           {/* Workspace Items */}
-          <div className="space-y-1 pt-1 border-t border-slate-800/60 dark:border-slate-200">
+          <div className="space-y-1 pt-3 border-t border-slate-800/60 dark:border-slate-200">
+            {isExpanded && (
+              <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 dark:text-indigo-600 px-3 pt-1 pb-2">
+                Workspace
+              </p>
+            )}
             {secondaryNavigation.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.href;
@@ -135,12 +153,18 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen }: SidebarPr
             onClick={() => setMobileOpen && setMobileOpen(false)}
           />
           <aside className="relative w-64 bg-slate-900 dark:bg-white border-r border-slate-800/80 dark:border-slate-200/80 rounded-r-3xl h-full z-10 p-4 flex flex-col justify-between overflow-y-auto">
-            <div className="space-y-4">
+            <div className="space-y-6">
               {/* Header */}
               <div className="flex items-center justify-between px-0.5">
                 <div className="flex items-center space-x-3">
-                  <div className="h-9 w-9 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-white text-xs shadow-md shadow-indigo-500/20">
-                    CO
+                  <div className="h-9 w-9 rounded-xl overflow-hidden flex items-center justify-center shrink-0">
+                    <Image
+                      src="/clientora_logo.png"
+                      alt="ClientOra Logo"
+                      width={36}
+                      height={36}
+                      className="h-full w-full object-contain"
+                    />
                   </div>
                   <div>
                     <h1 className="text-sm font-bold text-white dark:text-slate-900 tracking-tight leading-none">ClientOra</h1>
@@ -158,6 +182,9 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen }: SidebarPr
 
               {/* Core Links */}
               <div className="space-y-1">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 dark:text-indigo-600 px-3 pt-1 pb-2">
+                  Main
+                </p>
                 {mainNavigation.map((item) => {
                   const Icon = item.icon;
                   const isActive = pathname === item.href;
@@ -180,7 +207,10 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen }: SidebarPr
               </div>
 
               {/* Workspace Links */}
-              <div className="space-y-1 pt-1 border-t border-slate-800/60 dark:border-slate-200">
+              <div className="space-y-1 pt-3 border-t border-slate-800/60 dark:border-slate-200">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 dark:text-indigo-600 px-3 pt-1 pb-2">
+                  Workspace
+                </p>
                 {secondaryNavigation.map((item) => {
                   const Icon = item.icon;
                   const isActive = pathname === item.href;

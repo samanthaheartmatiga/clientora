@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   BarChart,
   Bar,
@@ -63,6 +63,17 @@ export default function DashboardCharts({
   invoices,
   canReadFinancials,
 }: DashboardChartsProps) {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 640);
+    };
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
   const parseRecordDate = (dateStr?: string): Date | null => {
     if (!dateStr) return null;
     const d = new Date(dateStr);
@@ -77,7 +88,7 @@ export default function DashboardCharts({
 
     const monthNames = [
       "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
 
     const totalCommittedBudget = projects
@@ -194,47 +205,49 @@ export default function DashboardCharts({
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 1. Dynamic Line Chart */}
-        <div className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
+        <div className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3 sm:space-y-4">
+          <div className="flex items-start sm:items-center justify-between gap-2">
             <div>
-              <h3 className="text-xs font-bold text-slate-900 dark:text-white flex items-center space-x-2">
-                <BarChart2 className="h-4 w-4 text-indigo-500" />
+              <h3 className="text-xs font-bold text-slate-900 dark:text-white flex items-center space-x-1.5 sm:space-x-2">
+                <BarChart2 className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-indigo-500 shrink-0" />
                 <span>Revenue & Growth Pipeline ($)</span>
               </h3>
-              <p className="text-[11px] text-slate-400 mt-0.5">
+              <p className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 leading-tight">
                 Monthly cumulative paid revenue vs estimated target
               </p>
             </div>
 
             {canReadFinancials && momGrowth !== null ? (
               <span
-                className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full border flex items-center space-x-0.5 ${
+                className={`text-[9px] sm:text-[10px] font-semibold px-2 py-0.5 sm:px-2.5 sm:py-0.5 rounded-full border flex items-center space-x-0.5 shrink-0 ${
                   momGrowth >= 0
                     ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
                     : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
                 }`}
               >
                 {momGrowth >= 0 ? (
-                  <ArrowUpRight className="h-3 w-3" />
+                  <ArrowUpRight className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                 ) : (
-                  <ArrowDownRight className="h-3 w-3" />
+                  <ArrowDownRight className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                 )}
                 <span>
                   {momGrowth >= 0 ? `+${momGrowth}%` : `${momGrowth}%`} vs Last Month
                 </span>
               </span>
             ) : (
-              <span className="text-[10px] font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 rounded-full">
+              <span className="text-[10px] font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 sm:px-2.5 sm:py-0.5 rounded-full shrink-0">
                 Active Year
               </span>
             )}
           </div>
 
           {canReadFinancials ? (
-            <div className="h-64 w-full pt-2 [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
+            <div className="h-52 sm:h-64 w-full pt-1 sm:pt-2 [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={lineChartData}>
-                  {/* Subtle Grid Lines matching background */}
+                <LineChart
+                  data={lineChartData}
+                  margin={isMobile ? { top: 10, right: 8, left: -16, bottom: 0 } : undefined}
+                >
                   <CartesianGrid
                     strokeDasharray="4 4"
                     vertical={false}
@@ -244,12 +257,13 @@ export default function DashboardCharts({
                     dataKey="month"
                     tickLine={false}
                     axisLine={false}
-                    tick={{ fontSize: 11, fill: "#94a3b8" }}
+                    tick={{ fontSize: isMobile ? 10 : 11, fill: "#94a3b8" }}
                   />
                   <YAxis
                     tickLine={false}
                     axisLine={false}
-                    tick={{ fontSize: 11, fill: "#94a3b8" }}
+                    width={isMobile ? 42 : undefined}
+                    tick={{ fontSize: isMobile ? 10 : 11, fill: "#94a3b8" }}
                     tickFormatter={(val: number) => {
                       if (val >= 1_000_000) return `$${(val / 1_000_000).toFixed(1)}M`;
                       if (val >= 1_000) return `$${(val / 1_000).toFixed(0)}k`;
@@ -273,17 +287,15 @@ export default function DashboardCharts({
                       ];
                     }) as unknown as React.ComponentProps<typeof Tooltip>["formatter"]}
                   />
-                  {/* Solid Paid Revenue Line */}
                   <Line
                     type="monotone"
                     dataKey="revenue"
                     name="Paid Revenue"
                     stroke="#6366f1"
-                    strokeWidth={3}
-                    dot={{ r: 4, fill: "#6366f1" }}
+                    strokeWidth={isMobile ? 2.5 : 3}
+                    dot={{ r: isMobile ? 3.5 : 4, fill: "#6366f1" }}
                     activeDot={{ r: 6 }}
                   />
-                  {/* Subtle Target Dashed Line with Opacity */}
                   <Line
                     type="monotone"
                     dataKey="target"
@@ -297,14 +309,14 @@ export default function DashboardCharts({
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="h-64 flex items-center justify-center bg-slate-50 dark:bg-slate-950/40 rounded-xl text-xs text-slate-400 italic">
+            <div className="h-52 sm:h-64 flex items-center justify-center bg-slate-50 dark:bg-slate-950/40 rounded-xl text-xs text-slate-400 italic">
               Financial performance visuals restricted for your role.
             </div>
           )}
         </div>
 
         {/* 2. Dynamic Pie Chart */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
           <div>
             <h3 className="text-xs font-bold text-slate-900 dark:text-white flex items-center space-x-2">
               <PieIcon className="h-4 w-4 text-indigo-500" />
@@ -313,7 +325,7 @@ export default function DashboardCharts({
             <p className="text-[11px] text-slate-400 mt-0.5">Distribution across status stages</p>
           </div>
 
-          <div className="h-48 w-full flex items-center justify-center [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
+          <div className="h-44 sm:h-48 w-full flex items-center justify-center [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
             {projectStatusData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -321,8 +333,8 @@ export default function DashboardCharts({
                     data={projectStatusData}
                     cx="50%"
                     cy="50%"
-                    innerRadius={50}
-                    outerRadius={70}
+                    innerRadius={isMobile ? 45 : 50}
+                    outerRadius={isMobile ? 65 : 70}
                     paddingAngle={4}
                     dataKey="value"
                     stroke="none"
@@ -366,24 +378,27 @@ export default function DashboardCharts({
       </div>
 
       {/* 3. Bar Chart: Stage-by-Stage Financial Allocation */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3 sm:space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2">
           <div>
-            <h3 className="text-xs font-bold text-slate-900 dark:text-white flex items-center space-x-2">
-              <Layers className="h-4 w-4 text-indigo-500" />
+            <h3 className="text-[11px] sm:text-xs font-bold text-slate-900 dark:text-white flex items-center space-x-1.5 sm:space-x-2">
+              <Layers className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-indigo-500 shrink-0" />
               <span>Capital Distribution & Cash by Stage ($)</span>
             </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">
+            <p className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 leading-tight">
               Total committed budget vs collected cash across project lifecycles
             </p>
           </div>
         </div>
 
-        <div className="h-60 w-full pt-2 [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
+        <div className="h-56 sm:h-60 w-full pt-1 sm:pt-2 [&_*:focus]:outline-none [&_*:focus-visible]:outline-none">
           {stageFinancialData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stageFinancialData} barGap={8}>
-                {/* Subtle Grid Lines matching background */}
+              <BarChart
+                data={stageFinancialData}
+                barGap={isMobile ? 3 : 8}
+                margin={isMobile ? { top: 10, right: 8, left: -16, bottom: 0 } : undefined}
+              >
                 <CartesianGrid
                   strokeDasharray="4 4"
                   vertical={false}
@@ -393,12 +408,14 @@ export default function DashboardCharts({
                   dataKey="stage"
                   tickLine={false}
                   axisLine={false}
-                  tick={{ fontSize: 11, fill: "#94a3b8" }}
+                  interval={0}
+                  tick={{ fontSize: isMobile ? 9 : 11, fill: "#94a3b8" }}
                 />
                 <YAxis
                   tickLine={false}
                   axisLine={false}
-                  tick={{ fontSize: 11, fill: "#94a3b8" }}
+                  width={isMobile ? 42 : undefined}
+                  tick={{ fontSize: isMobile ? 9 : 11, fill: "#94a3b8" }}
                   tickFormatter={(val: number) => {
                     if (val >= 1_000_000) return `$${(val / 1_000_000).toFixed(1)}M`;
                     if (val >= 1_000) return `$${(val / 1_000).toFixed(0)}k`;
@@ -422,18 +439,24 @@ export default function DashboardCharts({
                   verticalAlign="top"
                   align="right"
                   iconType="circle"
-                  wrapperStyle={{ fontSize: "11px", paddingBottom: "8px" }}
+                  iconSize={isMobile ? 7 : 9}
+                  wrapperStyle={{
+                    fontSize: isMobile ? "10px" : "11px",
+                    paddingBottom: "8px",
+                  }}
                 />
                 <Bar
                   dataKey="budget"
                   fill="#6366f1"
-                  radius={[6, 6, 0, 0]}
+                  radius={isMobile ? [4, 4, 0, 0] : [6, 6, 0, 0]}
+                  maxBarSize={isMobile ? 28 : undefined}
                   name="Committed Budget"
                 />
                 <Bar
                   dataKey="collected"
                   fill="#10b981"
-                  radius={[6, 6, 0, 0]}
+                  radius={isMobile ? [4, 4, 0, 0] : [6, 6, 0, 0]}
+                  maxBarSize={isMobile ? 28 : undefined}
                   name="Collected Revenue"
                 />
               </BarChart>

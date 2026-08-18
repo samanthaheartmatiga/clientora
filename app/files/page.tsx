@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Upload } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { createClient } from "@/app/supabase/client";
+import { useWorkspace } from "@/context/WorkspaceContext";
 import { logWorkspaceActivity } from "@/lib/audit";
 
 import { FileItem, FileCategory, ProjectOption } from "@/components/files/types";
@@ -12,9 +13,14 @@ import FileList from "@/components/files/FileList";
 import UploadModal from "@/components/files/UploadModal";
 
 interface DbProjectFileRecord {
+  id?: string;
+  file_name?: string;
   file_path: string;
-  project_id: string;
-  projects:
+  file_size?: number;
+  project_id?: string | null;
+  organization_id?: string | null;
+  created_at?: string;
+  projects?:
     | {
         id?: string;
         title: string;
@@ -27,6 +33,10 @@ interface DbProjectFileRecord {
 }
 
 export default function FilesPage() {
+  const supabase = useMemo(() => createClient(), []);
+  const { currentOrg } = useWorkspace();
+  const currentOrgId = currentOrg?.id;
+
   const [files, setFiles] = useState<FileItem[]>([]);
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -41,9 +51,15 @@ export default function FilesPage() {
   };
 
   const fetchProjects = useCallback(async () => {
+    if (!currentOrgId) {
+      setProjectOptions([]);
+      return;
+    }
+
     const { data, error } = await supabase
       .from("projects")
       .select("id, title")
+      .eq("organization_id", currentOrgId)
       .order("title", { ascending: true });
 
     if (error) {
@@ -52,110 +68,98 @@ export default function FilesPage() {
     }
 
     if (data) setProjectOptions(data as ProjectOption[]);
-  }, []);
+  }, [supabase, currentOrgId]);
 
   const fetchFiles = useCallback(async () => {
+    if (!currentOrgId) {
+      setFiles([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
 
-      const { data: storageData, error: storageError } = await supabase.storage
-        .from("files")
-        .list("", {
-          limit: 100,
-          offset: 0,
-          sortBy: { column: "created_at", order: "desc" },
-        });
+      const { data: dbRecords, error: dbError } = await supabase
+        .from("project_files")
+        .select("id, file_name, file_path, file_size, project_id, organization_id, created_at, projects(id, title)")
+        .eq("organization_id", currentOrgId)
+        .order("created_at", { ascending: false });
 
-      if (storageError) {
-        console.error("Error fetching storage files:", storageError.message);
-        return;
+      if (dbError) {
+        console.error("Error fetching project_files records:", dbError.message);
       }
 
-      if (storageData) {
-        const validFiles = storageData.filter(
-          (item) =>
-            item.name !== ".emptyFolderPlaceholder" &&
-            !item.name.startsWith(".")
-        );
+      const records = (dbRecords || []) as unknown as DbProjectFileRecord[];
 
-        const { data: dbRecords, error: dbError } = await supabase
-          .from("project_files")
-          .select("file_path, project_id, projects(id, title)");
+      const formattedFiles: FileItem[] = records.map((rec) => {
+        const { data: urlData } = supabase.storage
+          .from("files")
+          .getPublicUrl(rec.file_path);
 
-        if (dbError) {
-          console.error("Error fetching project_files records:", dbError.message);
-        }
+        const projObj = Array.isArray(rec.projects)
+          ? rec.projects[0]
+          : rec.projects;
 
-        const projectMap = new Map<string, { id: string; title: string }>();
-        if (dbRecords) {
-          const records = dbRecords as unknown as DbProjectFileRecord[];
-          for (const rec of records) {
-            const projObj = Array.isArray(rec.projects)
-              ? rec.projects[0]
-              : rec.projects;
+        return {
+          id: rec.id || rec.file_path,
+          name: rec.file_path, // Exact storage path used for deletion and downloads
+          displayName: rec.file_name || cleanFileNameDisplay(rec.file_path),
+          size: rec.file_size || 0,
+          created_at: rec.created_at || new Date().toISOString(),
+          publicUrl: urlData.publicUrl,
+          project_id: rec.project_id || null,
+          project_title: projObj?.title || null,
+        };
+      });
 
-            if (rec.file_path && rec.project_id) {
-              projectMap.set(rec.file_path, {
-                id: rec.project_id,
-                title: projObj?.title || "Project",
-              });
-            }
-          }
-        }
-
-        const formattedFiles: FileItem[] = validFiles.map((item) => {
-          const { data: urlData } = supabase.storage
-            .from("files")
-            .getPublicUrl(item.name);
-
-          const projInfo = projectMap.get(item.name);
-
-          return {
-            id: item.id || item.name,
-            name: item.name,
-            displayName: cleanFileNameDisplay(item.name),
-            size: item.metadata?.size || 0,
-            created_at: item.created_at || new Date().toISOString(),
-            publicUrl: urlData.publicUrl,
-            project_id: projInfo?.id || null,
-            project_title: projInfo?.title || null,
-          };
-        });
-
-        setFiles(formattedFiles);
-      }
+      setFiles(formattedFiles);
     } catch (err) {
       console.error("Connection error:", err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [supabase, currentOrgId]);
 
   useEffect(() => {
+    let isMounted = true;
+
     async function init() {
-      await fetchProjects();
-      await fetchFiles();
+      if (isMounted) {
+        await fetchProjects();
+        await fetchFiles();
+      }
     }
-    init();
+    void init();
+
+    if (!currentOrgId) return;
 
     const realtimeChannel = supabase
-      .channel("realtime-project-files")
+      .channel(`realtime-project-files-${currentOrgId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "project_files" },
+        {
+          event: "*",
+          schema: "public",
+          table: "project_files",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          fetchFiles();
+          if (isMounted) void fetchFiles();
         }
       )
       .subscribe();
 
     return () => {
+      isMounted = false;
       supabase.removeChannel(realtimeChannel);
     };
-  }, [fetchProjects, fetchFiles]);
+  }, [fetchProjects, fetchFiles, supabase, currentOrgId]);
 
   const handleModalUpload = async (file: File, uploadProjectId: string) => {
+    if (!currentOrgId) return;
     setUploading(true);
+
     try {
       const cleanFileName = `${Date.now()}_${file.name.replace(
         /[^a-zA-Z0-9.-]/g,
@@ -178,6 +182,7 @@ export default function FilesPage() {
         .from("project_files")
         .insert([
           {
+            organization_id: currentOrgId,
             project_id: uploadProjectId || null,
             file_name: file.name,
             file_path: cleanFileName,
@@ -191,7 +196,7 @@ export default function FilesPage() {
 
       const matchedProj = projectOptions.find((p) => p.id === uploadProjectId);
       const projSuffix = matchedProj ? ` (Project: ${matchedProj.title})` : "";
-      await logWorkspaceActivity(`Uploaded File: ${file.name}${projSuffix}`);
+      await logWorkspaceActivity(`Uploaded File: ${file.name}${projSuffix}`, currentOrgId);
 
       await fetchFiles();
     } catch (err) {
@@ -201,21 +206,58 @@ export default function FilesPage() {
     }
   };
 
-  const handleDeleteFile = async (fileName: string) => {
-    const targetFile = files.find((f) => f.name === fileName);
-    try {
-      setFiles((prev) => prev.filter((f) => f.name !== fileName));
+  const handleDeleteFile = async (fileNameOrId: string) => {
+    if (!currentOrgId) return;
 
-      await supabase.storage.from("files").remove([fileName]);
-      await supabase.from("project_files").delete().eq("file_path", fileName);
+    const targetFile = files.find(
+      (f) => f.name === fileNameOrId || f.id === fileNameOrId
+    );
+    const storagePath = targetFile?.name || fileNameOrId;
+    const recordId = targetFile?.id;
+
+    try {
+      // 1. Optimistically update local state immediately
+      setFiles((prev) =>
+        prev.filter((f) => f.name !== storagePath && f.id !== recordId)
+      );
+
+      // 2. Remove file from Supabase Storage
+      if (storagePath) {
+        const { error: storageErr } = await supabase.storage
+          .from("files")
+          .remove([storagePath]);
+
+        if (storageErr) {
+          console.error("Storage delete error:", storageErr.message);
+        }
+      }
+
+      // 3. Delete database record by ID or file_path
+      let dbQuery = supabase
+        .from("project_files")
+        .delete()
+        .eq("organization_id", currentOrgId);
+
+      if (recordId && recordId !== storagePath) {
+        dbQuery = dbQuery.eq("id", recordId);
+      } else {
+        dbQuery = dbQuery.eq("file_path", storagePath);
+      }
+
+      const { error: dbDeleteErr } = await dbQuery;
+      if (dbDeleteErr) {
+        console.error("Database record delete error:", dbDeleteErr.message);
+      }
 
       await logWorkspaceActivity(
-        `Deleted File: ${targetFile?.displayName || fileName}`
+        `Deleted File: ${targetFile?.displayName || storagePath}`,
+        currentOrgId
       );
 
       await fetchFiles();
     } catch (err) {
       console.error("Error deleting file:", err);
+      await fetchFiles();
     }
   };
 
@@ -254,7 +296,10 @@ export default function FilesPage() {
             Files Repository
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Store and manage client deliverables, assets, and project documentation.
+            Store and manage client deliverables, assets, and project documentation for{" "}
+            <span className="font-semibold text-slate-700 dark:text-slate-200">
+              {currentOrg?.name || "current workspace"}
+            </span>.
           </p>
         </div>
 

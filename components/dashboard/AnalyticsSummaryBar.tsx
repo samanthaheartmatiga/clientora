@@ -47,14 +47,12 @@ export default function AnalyticsSummaryBar({
 }: AnalyticsSummaryBarProps) {
   const [selectedRange, setSelectedRange] = useState<"7D" | "30D" | "90D" | "YTD">("30D");
 
-  // Helper to parse the business date safely
   const parseRecordDate = (dateStr?: string): Date | null => {
     if (!dateStr) return null;
     const d = new Date(dateStr);
     return isNaN(d.getTime()) ? null : d;
   };
 
-  // Dynamic Date-Window Filter
   const filteredData = useMemo(() => {
     const now = new Date();
     const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
@@ -83,28 +81,24 @@ export default function AnalyticsSummaryBar({
       priorPeriodStart = new Date(endOfToday.getTime() - windowMs * 2);
       priorPeriodEnd = currentPeriodStart;
     } else {
-      // YTD / Full Year Scope: All 2026 records (from Jan 1, 2026 to Dec 31, 2026)
       currentPeriodStart = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
       currentPeriodEnd = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
       priorPeriodStart = new Date(now.getFullYear() - 1, 0, 1, 0, 0, 0, 0);
       priorPeriodEnd = new Date(now.getFullYear() - 1, 11, 31, 23, 59, 59, 999);
     }
 
-    // Filter Invoices in active window
     const currentInvoices = invoices.filter((inv) => {
       const d = parseRecordDate(inv.due_date) || parseRecordDate(inv.created_at);
       if (!d) return false;
       return d >= currentPeriodStart && d <= currentPeriodEnd;
     });
 
-    // Filter Projects in active window
     const currentProjects = projects.filter((p) => {
       const d = parseRecordDate(p.due_date) || parseRecordDate(p.created_at);
       if (!d) return false;
       return d >= currentPeriodStart && d <= currentPeriodEnd;
     });
 
-    // Filter Prior Invoices for Period-over-Period (PoP) comparison
     const priorInvoices = invoices.filter((inv) => {
       const d = parseRecordDate(inv.due_date) || parseRecordDate(inv.created_at);
       if (!d) return false;
@@ -128,20 +122,14 @@ export default function AnalyticsSummaryBar({
       0
     );
 
-    // Active client accounts involved in this scope
     const windowClientSet = new Set([
       ...currentProjects.map((p) => p.company_name),
       ...currentInvoices.map((i) => i.company_name),
     ]);
     const windowClientCount = windowClientSet.size || (totalClients > 0 ? totalClients : 1);
 
-    // Live calculated ARPU
     const arpu = Math.round(currentPaidRevenue / windowClientCount);
-
-    // Live calculated Workload Density
     const workloadDensity = (currentActiveProjects / windowClientCount).toFixed(1);
-
-    // Live calculated Target Pace
     const targetPace =
       totalProjectBudgets > 0
         ? Math.min(Math.round((currentPaidRevenue / totalProjectBudgets) * 100), 100)
@@ -149,7 +137,6 @@ export default function AnalyticsSummaryBar({
         ? 100
         : 0;
 
-    // Live PoP Growth Percentage
     let growthRate: number | null = null;
     if (priorPaidRevenue > 0) {
       growthRate = Math.round(((currentPaidRevenue - priorPaidRevenue) / priorPaidRevenue) * 100);
@@ -171,7 +158,6 @@ export default function AnalyticsSummaryBar({
     };
   }, [selectedRange, invoices, projects, totalClients]);
 
-  // Center & Middle Aligned Native XLSX Exporter
   const handleExportNativeExcel = async () => {
     const now = new Date();
     const dateStr = now.toISOString().split("T")[0];
@@ -224,14 +210,12 @@ export default function AnalyticsSummaryBar({
 
     let cursor = 1;
 
-    // 1. Header Banner
     worksheet.mergeCells(`A${cursor}:E${cursor}`);
     worksheet.getRow(cursor).getCell(1).value = "CLIENTORA WORKSPACE ANALYTICS REPORT";
     worksheet.getRow(cursor).height = 36;
     styleRow(cursor, "FF312E81", "FFFFFFFF", true, 13);
     cursor++;
 
-    // Meta Row
     worksheet.mergeCells(`D${cursor}:E${cursor}`);
     worksheet.getRow(cursor).values = [
       "Generated Date",
@@ -244,11 +228,9 @@ export default function AnalyticsSummaryBar({
     worksheet.getRow(cursor).getCell(3).font = { name: "Segoe UI", bold: true, color: { argb: "FF312E81" } };
     cursor++;
 
-    // Spacer
     worksheet.addRow([]);
     cursor++;
 
-    // 2. Section 1: Executive KPI Ratios
     worksheet.mergeCells(`A${cursor}:E${cursor}`);
     worksheet.getRow(cursor).getCell(1).value = "1. EXECUTIVE KEY PERFORMANCE RATIOS";
     styleRow(cursor, "FF4F46E5", "FFFFFFFF", true, 11);
@@ -291,11 +273,9 @@ export default function AnalyticsSummaryBar({
       cursor++;
     });
 
-    // Spacer
     worksheet.addRow([]);
     cursor++;
 
-    // 3. Section 2: Projects Register
     worksheet.mergeCells(`A${cursor}:E${cursor}`);
     worksheet.getRow(cursor).getCell(1).value = `2. PROJECT DELIVERABLES REGISTER (${selectedRange} FILTERED)`;
     styleRow(cursor, "FF4F46E5", "FFFFFFFF", true, 11);
@@ -330,11 +310,9 @@ export default function AnalyticsSummaryBar({
       cursor++;
     }
 
-    // Spacer
     worksheet.addRow([]);
     cursor++;
 
-    // 4. Section 3: Invoices Register
     worksheet.mergeCells(`A${cursor}:E${cursor}`);
     worksheet.getRow(cursor).getCell(1).value = `3. BILLING & INVOICING REGISTER (${selectedRange} FILTERED)`;
     styleRow(cursor, "FF4F46E5", "FFFFFFFF", true, 11);
@@ -399,12 +377,12 @@ export default function AnalyticsSummaryBar({
   };
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+    <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-3 md:gap-4">
       {/* 1. Live Derived Ratios */}
-      <div className="flex flex-wrap items-center gap-4 text-xs w-full md:w-auto">
+      <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs w-full md:w-auto">
         {canReadFinancials && (
-          <div className="flex items-center space-x-2 pr-4 border-r border-slate-200 dark:border-slate-800">
-            <DollarSign className="h-4 w-4 text-emerald-500 shrink-0" />
+          <div className="flex items-center space-x-1.5 sm:space-x-2 pr-3 sm:pr-4 border-r border-slate-200 dark:border-slate-800">
+            <DollarSign className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-emerald-500 shrink-0" />
             <span className="text-slate-500 dark:text-slate-400">ARPU:</span>
             <span className="font-bold text-slate-900 dark:text-white">
               ${filteredData.arpu.toLocaleString()}
@@ -412,17 +390,17 @@ export default function AnalyticsSummaryBar({
           </div>
         )}
 
-        <div className="flex items-center space-x-2 pr-4 border-r border-slate-200 dark:border-slate-800">
-          <Activity className="h-4 w-4 text-indigo-500 shrink-0" />
-          <span className="text-slate-500 dark:text-slate-400">Workload Density:</span>
+        <div className="flex items-center space-x-1.5 sm:space-x-2 pr-3 sm:pr-4 border-r border-slate-200 dark:border-slate-800">
+          <Activity className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-indigo-500 shrink-0" />
+          <span className="text-slate-500 dark:text-slate-400">Workload:</span>
           <span className="font-bold text-slate-900 dark:text-white">
             {filteredData.workloadDensity}{" "}
             <span className="font-normal text-[10px] text-slate-400">proj/client</span>
           </span>
         </div>
 
-        <div className="flex items-center space-x-2">
-          <Target className="h-4 w-4 text-purple-500 shrink-0" />
+        <div className="flex items-center space-x-1.5 sm:space-x-2">
+          <Target className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-purple-500 shrink-0" />
           <span className="text-slate-500 dark:text-slate-400">Target Pace:</span>
           <span className="font-bold text-slate-900 dark:text-white">
             {filteredData.targetPace}%
@@ -454,17 +432,17 @@ export default function AnalyticsSummaryBar({
         </div>
       </div>
 
-      {/* 2. Live Slicers & Styled Native Excel Export Button */}
-      <div className="flex items-center space-x-2 self-end md:self-auto w-full md:w-auto justify-between md:justify-end pt-2 md:pt-0 border-t md:border-t-0 border-slate-100 dark:border-slate-800">
-        <div className="inline-flex bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+      {/* 2. Live Slicers & Styled Native Excel Export Button (Tightened for mobile screens) */}
+      <div className="flex items-center space-x-1.5 sm:space-x-2 self-end md:self-auto w-full md:w-auto justify-between md:justify-end pt-2 md:pt-0 border-t md:border-t-0 border-slate-100 dark:border-slate-800">
+        <div className="inline-flex bg-slate-100 dark:bg-slate-950 p-0.5 sm:p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-[11px] sm:text-xs">
           {(["7D", "30D", "90D", "YTD"] as const).map((period) => (
             <button
               key={period}
               type="button"
               onClick={() => setSelectedRange(period)}
-              className={`px-2.5 py-1 rounded-lg font-medium transition cursor-pointer ${
+              className={`px-2 sm:px-2.5 py-1 rounded-lg font-semibold transition cursor-pointer ${
                 selectedRange === period
-                  ? "bg-indigo-600 text-white shadow-sm"
+                  ? "bg-indigo-600 text-white shadow-xs"
                   : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
               }`}
             >
@@ -476,9 +454,10 @@ export default function AnalyticsSummaryBar({
         <button
           type="button"
           onClick={handleExportNativeExcel}
-          className="inline-flex items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 transition cursor-pointer"
+          className="inline-flex items-center space-x-1 sm:space-x-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] sm:text-xs font-semibold px-2.5 sm:px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 transition cursor-pointer"
+          title="Export Analytics Report to Excel"
         >
-          <Download className="h-3.5 w-3.5" />
+          <Download className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
           <span>Export Report</span>
         </button>
       </div>

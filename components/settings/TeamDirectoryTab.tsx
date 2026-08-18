@@ -1,8 +1,30 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
-import { Shield, ChevronDown, Check, Loader2, AlertCircle } from "lucide-react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  Shield,
+  ChevronDown,
+  Check,
+  Loader2,
+  AlertCircle,
+  UserPlus,
+  Mail,
+  Clock,
+  Trash2,
+  Copy,
+  X,
+  Link as LinkIcon,
+  AlertTriangle,
+  CheckCircle2,
+  Search,
+  Globe,
+  Send,
+} from "lucide-react";
 import { createClient } from "@/app/supabase/client";
+import { useWorkspace } from "@/context/WorkspaceContext";
+import { useUserRole } from "@/hooks/useUserRole";
+import { logWorkspaceActivity } from "@/lib/audit";
+import DeleteWorkspaceModal from "@/components/settings/DeleteWorkspaceModal";
 
 export type AppRole = "superadmin" | "admin" | "member" | "viewer";
 
@@ -17,28 +39,28 @@ export const ROLES: Record<AppRole, RoleConfig> = {
   superadmin: {
     label: "Super Admin",
     level: 4,
-    description: "Full system access, workspace management, and billing control",
+    description: "Full workspace authority, member management, and billing control",
     badgeStyle:
       "bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border-purple-200 dark:border-purple-800",
   },
   admin: {
     label: "Admin / Operations",
     level: 3,
-    description: "Operations and team lead role focused on day-to-day workspace execution",
+    description: "Operations lead handling day-to-day workspace execution & team invites",
     badgeStyle:
       "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800",
   },
   member: {
     label: "Project Member",
     level: 2,
-    description: "Execution-level team member handling assigned projects and client tasks",
+    description: "Execution-level team member handling assigned projects and deliverables",
     badgeStyle:
       "bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200 dark:border-blue-800",
   },
   viewer: {
     label: "Viewer (Read-Only)",
     level: 1,
-    description: "Read-only access across workspace dashboards and reports",
+    description: "Read-only access across workspace dashboards and client reports",
     badgeStyle:
       "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700",
   },
@@ -48,160 +70,524 @@ export function hasPermission(userRole: AppRole, minRequiredRole: AppRole): bool
   return (ROLES[userRole]?.level ?? 1) >= (ROLES[minRequiredRole]?.level ?? 1);
 }
 
-interface RegisteredUser {
+interface WorkspaceMemberItem {
   id: string;
+  user_id: string;
+  role: AppRole;
+  created_at: string;
   full_name: string | null;
   email: string | null;
-  role: AppRole;
-  created_at?: string;
 }
 
-interface ProfileRow {
+interface PendingInvite {
+  id: string;
+  email: string | null;
+  role: string;
+  token: string;
+  invite_type?: "email" | "share_link";
+  expires_at: string;
+  created_at: string;
+}
+
+interface RawMemberRow {
+  id: string;
+  user_id: string;
+  role: string;
+  created_at: string;
+}
+
+interface ProfileMapRow {
   id: string;
   full_name: string | null;
   email: string | null;
-  role: string | null;
-  created_at?: string;
 }
 
 export default function TeamDirectoryTab() {
   const supabase = useMemo(() => createClient(), []);
+  const { currentOrg } = useWorkspace();
+  const currentOrgId = currentOrg?.id;
+  const { role: currentUserRole } = useUserRole();
 
-  const [currentUserRole, setCurrentUserRole] = useState<AppRole>("viewer");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [usersList, setUsersList] = useState<RegisteredUser[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [membersList, setMembersList] = useState<WorkspaceMemberItem[]>([]);
+  const [invitations, setInvitations] = useState<PendingInvite[]>([]);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
 
+  // Search & Filter States
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedRoleFilter, setSelectedRoleFilter] = useState<"all" | AppRole>("all");
+
+  // Role modification dropdown states
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState("");
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  // Remove Member Modal states
+  const [memberToRemove, setMemberToRemove] = useState<WorkspaceMemberItem | null>(null);
+  const [isRemoving, setIsRemoving] = useState(false);
+
+  // Delete Workspace Modal State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+
+  // Invite Modal States
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteTab, setInviteTab] = useState<"email" | "link">("email");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<AppRole>("member");
+  const [isSubmittingInvite, setIsSubmittingInvite] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [generatedLink, setGeneratedLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const isUserAdminOrSuperadmin =
+    hasPermission(currentUserRole as AppRole, "superadmin") ||
+    hasPermission(currentUserRole as AppRole, "admin");
+
+  const isSuperAdmin = currentUserRole === "superadmin";
+
+  const loadTeamAndMembers = useCallback(async (isInitial = false) => {
+    if (!currentOrgId) {
+      setMembersList([]);
+      setInvitations([]);
+      if (isInitial) setIsInitialLoading(false);
+      return;
+    }
+
+    try {
+      if (isInitial) setIsInitialLoading(true);
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) setCurrentUserId(user.id);
+
+      const { data: memberRows, error: memberErr } = await supabase
+        .from("organization_members")
+        .select("id, user_id, role, created_at")
+        .eq("organization_id", currentOrgId)
+        .order("created_at", { ascending: true });
+
+      if (memberErr) {
+        console.error("Error fetching workspace members:", memberErr.message);
+      }
+
+      const rows = (memberRows || []) as RawMemberRow[];
+      const userIds = rows.map((m) => m.user_id);
+
+      const profileMap = new Map<string, { full_name: string | null; email: string | null }>();
+      if (userIds.length > 0) {
+        const { data: profileRows } = await supabase
+          .from("profiles")
+          .select("id, full_name, email")
+          .in("id", userIds);
+
+        if (profileRows) {
+          (profileRows as ProfileMapRow[]).forEach((p) => {
+            profileMap.set(p.id, {
+              full_name: p.full_name,
+              email: p.email,
+            });
+          });
+        }
+      }
+
+      const formattedMembers: WorkspaceMemberItem[] = rows.map((m) => {
+        const prof = profileMap.get(m.user_id);
+        return {
+          id: m.id,
+          user_id: m.user_id,
+          role: (m.role as AppRole) || "member",
+          created_at: m.created_at,
+          full_name: prof?.full_name || null,
+          email: prof?.email || null,
+        };
+      });
+
+      setMembersList(formattedMembers);
+
+      // Fetch pending email invitations only
+      const { data: inviteRows, error: inviteErr } = await supabase
+        .from("invitations")
+        .select("id, email, role, token, expires_at, created_at")
+        .eq("organization_id", currentOrgId)
+        .eq("status", "pending")
+        .not("email", "is", null)
+        .gt("expires_at", new Date().toISOString())
+        .order("created_at", { ascending: false });
+
+      if (inviteErr) {
+        console.error("Error fetching invites:", inviteErr.message);
+      } else if (inviteRows) {
+        setInvitations(inviteRows as PendingInvite[]);
+      }
+    } catch (err) {
+      console.error("Failed to load team directory:", err);
+    } finally {
+      if (isInitial) setIsInitialLoading(false);
+    }
+  }, [supabase, currentOrgId]);
 
   useEffect(() => {
     let isMounted = true;
 
-    async function loadUsersAndRole() {
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-
-        if (user && isMounted) {
-          setCurrentUserId(user.id);
-
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("role")
-            .eq("id", user.id)
-            .maybeSingle();
-
-          if (profile?.role && isMounted) {
-            setCurrentUserRole(profile.role as AppRole);
-          }
-        }
-
-        const { data: profiles, error } = await supabase
-          .from("profiles")
-          .select("id, full_name, email, role, created_at")
-          .order("created_at", { ascending: true });
-
-        if (!error && profiles && isMounted) {
-          const typedProfiles = profiles as ProfileRow[];
-          setUsersList(
-            typedProfiles.map((p) => ({
-              id: p.id,
-              full_name: p.full_name,
-              email: p.email,
-              role: (p.role as AppRole) || "viewer",
-              created_at: p.created_at,
-            }))
-          );
-        }
-      } catch (err) {
-        console.error("Failed to load users:", err);
-      } finally {
-        if (isMounted) setIsLoading(false);
-      }
+    async function init() {
+      if (isMounted) await loadTeamAndMembers(true);
     }
+    void init();
 
-    loadUsersAndRole();
+    if (!currentOrgId) return;
+
+    const channel = supabase
+      .channel(`realtime-team-tab-${currentOrgId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "organization_members",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
+        () => {
+          if (isMounted) void loadTeamAndMembers(false);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "invitations",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
+        () => {
+          if (isMounted) void loadTeamAndMembers(false);
+        }
+      )
+      .subscribe();
 
     return () => {
       isMounted = false;
+      supabase.removeChannel(channel);
     };
-  }, [supabase]);
+  }, [loadTeamAndMembers, supabase, currentOrgId]);
 
-  const handleRoleChange = async (targetUserId: string, newRole: AppRole) => {
-    if (!hasPermission(currentUserRole, "admin")) {
+  const filteredMembers = useMemo(() => {
+    return membersList
+      .filter((m) => {
+        const matchesRole =
+          selectedRoleFilter === "all" ? true : m.role === selectedRoleFilter;
+        const q = searchQuery.toLowerCase().trim();
+        const matchesQuery =
+          !q ||
+          (m.full_name && m.full_name.toLowerCase().includes(q)) ||
+          (m.email && m.email.toLowerCase().includes(q));
+        return matchesRole && matchesQuery;
+      })
+      .sort((a, b) => {
+        if (a.user_id === currentUserId) return -1;
+        if (b.user_id === currentUserId) return 1;
+        return 0;
+      });
+  }, [membersList, searchQuery, selectedRoleFilter, currentUserId]);
+
+  const handleRoleChange = async (targetMember: WorkspaceMemberItem, newRole: AppRole) => {
+    if (!currentOrgId || !hasPermission(currentUserRole as AppRole, "admin")) {
       setUpdateError("You do not have permission to modify user roles.");
       return;
     }
 
     setOpenDropdownId(null);
     setUpdateError("");
+    setActionSuccess(null);
 
-    const targetUser = usersList.find((u) => u.id === targetUserId);
-
-    if (currentUserRole === "admin" && targetUser?.role === "superadmin") {
-      setUpdateError("Access Denied: Admin / Operations cannot alter the role of a Super Admin.");
+    if (currentUserRole === "admin" && targetMember.role === "superadmin") {
+      setUpdateError("Access Denied: Admins cannot alter the role of a Super Admin.");
       return;
     }
 
     if (currentUserRole === "admin" && newRole === "superadmin") {
-      setUpdateError("Access Denied: Admin / Operations cannot assign the Super Admin role.");
+      setUpdateError("Access Denied: Admins cannot assign the Super Admin role.");
       return;
     }
 
-    const superAdminCount = usersList.filter((u) => u.role === "superadmin").length;
-    if (targetUser?.role === "superadmin" && newRole !== "superadmin" && superAdminCount <= 1) {
-      setUpdateError("Cannot demote the only Super Admin. Assign another Super Admin first.");
+    const superAdminCount = membersList.filter((u) => u.role === "superadmin").length;
+    if (targetMember.role === "superadmin" && newRole !== "superadmin" && superAdminCount <= 1) {
+      setUpdateError("Cannot demote the sole Super Admin. Promote another member to Super Admin first.");
       return;
     }
 
-    setUpdatingUserId(targetUserId);
+    setUpdatingUserId(targetMember.user_id);
 
-    const { data, error } = await supabase
-      .from("profiles")
-      .update({ role: newRole })
-      .eq("id", targetUserId)
-      .select();
+    try {
+      const { error: orgMemberError } = await supabase
+        .from("organization_members")
+        .update({ role: newRole })
+        .eq("organization_id", currentOrgId)
+        .eq("user_id", targetMember.user_id);
 
-    if (error) {
-      console.error("Error updating role:", error.message);
-      setUpdateError(`Failed to update role: ${error.message}`);
-    } else if (!data || data.length === 0) {
-      setUpdateError("Role update blocked by database policies (RLS). Please verify your SQL policies.");
-    } else {
-      setUsersList((prev) =>
-        prev.map((u) => (u.id === targetUserId ? { ...u, role: newRole } : u))
+      if (orgMemberError) throw orgMemberError;
+
+      await supabase
+        .from("profiles")
+        .update({ role: newRole })
+        .eq("id", targetMember.user_id);
+
+      setMembersList((prev) =>
+        prev.map((u) => (u.user_id === targetMember.user_id ? { ...u, role: newRole } : u))
       );
-    }
 
-    setUpdatingUserId(null);
+      setActionSuccess(`Updated role for ${targetMember.full_name || targetMember.email} to ${newRole}`);
+      await logWorkspaceActivity(
+        `Changed role for ${targetMember.full_name || targetMember.email} to ${newRole}`,
+        currentOrgId
+      );
+    } catch (err: unknown) {
+      console.error("Error updating role:", err);
+      const msg =
+        typeof err === "object" && err !== null && "message" in err
+          ? String((err as { message: unknown }).message)
+          : "Failed to update role.";
+      setUpdateError(msg);
+    } finally {
+      setUpdatingUserId(null);
+    }
   };
 
-  const isUserAdminOrSuperadmin =
-    hasPermission(currentUserRole, "superadmin") ||
-    hasPermission(currentUserRole, "admin");
+  const handleConfirmRemoveMember = async () => {
+    if (!memberToRemove || !currentOrgId) return;
 
-  if (isLoading) {
+    setIsRemoving(true);
+    setUpdateError("");
+    setActionSuccess(null);
+
+    try {
+      const { data, error } = await supabase.rpc("remove_organization_member", {
+        target_org_id: currentOrgId,
+        target_user_id: memberToRemove.user_id,
+      });
+
+      if (error) throw error;
+
+      if (!data?.success) {
+        setUpdateError(data?.message || "Failed to remove member from workspace.");
+        setIsRemoving(false);
+        return;
+      }
+
+      await logWorkspaceActivity(
+        `Removed member ${memberToRemove.full_name || memberToRemove.email} from workspace`,
+        currentOrgId
+      );
+
+      setActionSuccess("Member removed from workspace successfully.");
+      setMemberToRemove(null);
+      await loadTeamAndMembers(false);
+    } catch (err: unknown) {
+      console.error("Failed to remove member:", err);
+      const msg =
+        typeof err === "object" && err !== null && "message" in err
+          ? String((err as { message: unknown }).message)
+          : "Error executing member removal.";
+      setUpdateError(msg);
+    } finally {
+      setIsRemoving(false);
+    }
+  };
+
+  const handleGenerateInvite = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (!currentOrgId) return;
+
+    const isEmailMode = inviteTab === "email";
+    const cleanEmail = isEmailMode ? inviteEmail.trim().toLowerCase() : null;
+
+    if (isEmailMode && !cleanEmail) {
+      setInviteError("Please enter a valid recipient email address.");
+      return;
+    }
+
+    setIsSubmittingInvite(true);
+    setInviteError(null);
+
+    try {
+      if (cleanEmail) {
+        const existingMember = membersList.find(
+          (m) => m.email?.toLowerCase() === cleanEmail
+        );
+        if (existingMember) {
+          throw new Error("This user is already an active member of this workspace.");
+        }
+
+        await supabase
+          .from("invitations")
+          .delete()
+          .eq("organization_id", currentOrgId)
+          .eq("email", cleanEmail);
+      }
+
+      const generatedToken =
+        Math.random().toString(36).substring(2, 15) +
+        Math.random().toString(36).substring(2, 15) +
+        Date.now().toString(36);
+
+      const { error: insertErr } = await supabase.from("invitations").insert([
+        {
+          organization_id: currentOrgId,
+          email: cleanEmail,
+          role: inviteRole,
+          token: generatedToken,
+          status: "pending",
+          expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+      ]);
+
+      if (insertErr) throw insertErr;
+
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      const inviteUrl = `${origin}/join?token=${generatedToken}`;
+
+      if (isEmailMode && cleanEmail) {
+        try {
+          const emailRes = await fetch("/api/invite", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: cleanEmail,
+              inviteUrl,
+              workspaceName: currentOrg?.name,
+              role: ROLES[inviteRole]?.label || inviteRole,
+            }),
+          });
+
+          const emailData = await emailRes.json();
+          if (!emailRes.ok) {
+            setInviteError(`Invite created, but failed to send email: ${emailData?.error || "Unknown error"}`);
+            setIsSubmittingInvite(false);
+            return;
+          }
+        } catch (emailErr) {
+          console.error("Failed to trigger invite email:", emailErr);
+          setInviteError("Network error while sending email.");
+          setIsSubmittingInvite(false);
+          return;
+        }
+      }
+
+      setGeneratedLink(inviteUrl);
+      await logWorkspaceActivity(
+        `Created Workspace Invite (${isEmailMode ? `Email: ${cleanEmail}` : "Share Link"}) [Role: ${inviteRole}]`,
+        currentOrgId
+      );
+
+      await loadTeamAndMembers(false);
+    } catch (err: unknown) {
+      console.error("Failed to generate invite:", err);
+      const msg =
+        typeof err === "object" && err !== null && "message" in err
+          ? String((err as { message: unknown }).message)
+          : "Failed to generate invite.";
+      setInviteError(msg);
+    } finally {
+      setIsSubmittingInvite(false);
+    }
+  };
+
+  const handleCopyLink = () => {
+    if (!generatedLink) return;
+    navigator.clipboard.writeText(generatedLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRevokeInvite = async (inviteId: string, label: string) => {
+    if (!currentOrgId) return;
+
+    try {
+      const { error } = await supabase
+        .from("invitations")
+        .delete()
+        .eq("id", inviteId)
+        .eq("organization_id", currentOrgId);
+
+      if (error) throw error;
+
+      setInvitations((prev) => prev.filter((i) => i.id !== inviteId));
+      await logWorkspaceActivity(`Revoked Workspace Invite (${label})`, currentOrgId);
+    } catch (err) {
+      console.error("Failed to revoke invite:", err);
+    }
+  };
+
+  if (isInitialLoading) {
     return (
       <div className="py-12 flex flex-col items-center justify-center space-y-2 text-slate-400">
-        <Loader2 className="h-6 w-6 animate-spin text-indigo-600" />
-        <span className="text-xs">Loading registered users...</span>
+        <Loader2 className="h-6 w-6 animate-spin text-indigo-600 dark:text-indigo-400" />
+        <span className="text-xs">Loading team directory...</span>
       </div>
     );
   }
 
+  const emailInvitations = invitations.filter((inv) => Boolean(inv.email));
+
   return (
-    <div className="space-y-5">
-      <div className="border-b border-slate-100 dark:border-slate-800 pb-3">
-        <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-          Team Directory & Role Assignment
-        </h2>
-        <p className="text-[11px] text-slate-400">
-          Superadmins and Admins can assign and update workspace access roles for all registered members.
-        </p>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+        <div>
+          <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+            Team Directory & Workspace Access
+          </h2>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            Manage teammates, roles, and workspace access for{" "}
+            <span className="font-semibold text-slate-700 dark:text-slate-200">
+              {currentOrg?.name || "current workspace"}
+            </span>.
+          </p>
+        </div>
+
+        <div className="flex items-center space-x-2.5 self-start lg:self-auto">
+          {isUserAdminOrSuperadmin && (
+            <button
+              type="button"
+              onClick={() => {
+                setGeneratedLink(null);
+                setInviteEmail("");
+                setInviteRole("member");
+                setInviteTab("email");
+                setInviteError(null);
+                setIsInviteModalOpen(true);
+              }}
+              className="inline-flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3.5 py-2 rounded-xl shadow-md shadow-indigo-600/20 transition cursor-pointer"
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              <span>Invite Member</span>
+            </button>
+          )}
+
+          {isSuperAdmin && (
+            <button
+              type="button"
+              onClick={() => setIsDeleteModalOpen(true)}
+              className="inline-flex items-center space-x-1.5 border border-rose-200 dark:border-rose-900 bg-rose-50/50 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 text-xs font-semibold px-3 py-2 rounded-xl transition cursor-pointer"
+              title="Delete workspace"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Delete Workspace</span>
+            </button>
+          )}
+        </div>
       </div>
+
+      {actionSuccess && (
+        <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+          <span>{actionSuccess}</span>
+        </div>
+      )}
 
       {updateError && (
         <div className="flex items-center space-x-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl p-3 text-xs text-rose-600 dark:text-rose-400">
@@ -210,112 +596,220 @@ export default function TeamDirectoryTab() {
         </div>
       )}
 
-      <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200/80 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900">
-        {usersList.length > 0 ? (
-          usersList.map((user) => {
-            const initials = (user.full_name || user.email || "U")
+      {/* Search & Filter Bar */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-3 rounded-2xl shadow-xs">
+        <div className="relative flex-1">
+          <Search className="h-4 w-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search member by name or email..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-3.5 py-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
+          <button
+            onClick={() => setSelectedRoleFilter("all")}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center space-x-1.5 ${
+              selectedRoleFilter === "all"
+                ? "bg-indigo-600 text-white shadow-xs"
+                : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+            }`}
+          >
+            <span>All</span>
+            <span className="text-[10px] opacity-75 font-normal">
+              ({membersList.length})
+            </span>
+          </button>
+
+          {(["superadmin", "admin", "member", "viewer"] as AppRole[]).map((rKey) => {
+            const count = membersList.filter((m) => m.role === rKey).length;
+            const isSelected = selectedRoleFilter === rKey;
+            return (
+              <button
+                key={rKey}
+                onClick={() => setSelectedRoleFilter(rKey)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center space-x-1.5 ${
+                  isSelected
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                }`}
+              >
+                <span>{ROLES[rKey].label}</span>
+                <span className="text-[10px] opacity-75 font-normal">({count})</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Active Members Table */}
+      <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200/80 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 shadow-xs">
+        <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 rounded-t-2xl flex items-center justify-between">
+          <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+            Active Workspace Members ({filteredMembers.length})
+          </span>
+          {(searchQuery || selectedRoleFilter !== "all") && (
+            <span className="text-[11px] text-slate-400">
+              Filtered from {membersList.length} total members
+            </span>
+          )}
+        </div>
+
+        {filteredMembers.length > 0 ? (
+          filteredMembers.map((member, index) => {
+            const initials = (member.full_name || member.email || "U")
               .split(" ")
               .map((n) => n[0])
               .join("")
               .substring(0, 2)
               .toUpperCase();
 
-            const isSelf = user.id === currentUserId;
-            const roleConf = ROLES[user.role] || ROLES.viewer;
-
-            const isTargetSuperAdmin = user.role === "superadmin";
+            const isSelf = member.user_id === currentUserId;
+            const roleConf = ROLES[member.role] || ROLES.viewer;
+            const isTargetSuperAdmin = member.role === "superadmin";
             const canEditThisUser =
               isUserAdminOrSuperadmin &&
               !(currentUserRole === "admin" && isTargetSuperAdmin);
 
+            const popUpward = index >= Math.max(1, filteredMembers.length - 2);
+
             return (
               <div
-                key={user.id}
-                className="p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 first:rounded-t-2xl last:rounded-b-2xl hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition"
+                key={member.id}
+                className={`p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition ${
+                  isSelf
+                    ? "bg-indigo-50/60 dark:bg-indigo-950/30 border-l-4 border-l-indigo-600 dark:border-l-indigo-500"
+                    : "hover:bg-slate-50/50 dark:hover:bg-slate-800/30"
+                } ${index === filteredMembers.length - 1 ? "rounded-b-2xl" : ""}`}
               >
                 <div className="flex items-center space-x-3">
-                  <div className="h-9 w-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800/60 flex items-center justify-center text-xs font-bold text-indigo-600 dark:text-indigo-400 shrink-0">
+                  <div
+                    className={`h-9 w-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${
+                      isSelf
+                        ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/30"
+                        : "bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800/60 text-indigo-600 dark:text-indigo-400"
+                    }`}
+                  >
                     {initials}
                   </div>
                   <div>
                     <div className="flex items-center space-x-2">
                       <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
-                        {user.full_name || "Name not provided"}
+                        {member.full_name || "Name not provided"}
                       </span>
                       {isSelf && (
-                        <span className="text-[10px] bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded-md font-semibold border border-indigo-200/60 dark:border-indigo-800/40">
+                        <span className="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-md font-bold shadow-xs">
                           You
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      {user.email || "No email address"}
+                    <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
+                      <Mail className="h-3 w-3" />
+                      <span>{member.email || "No email address"}</span>
                     </p>
                   </div>
                 </div>
 
-                <div className="relative shrink-0 self-start sm:self-auto">
-                  {canEditThisUser ? (
-                    <div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setOpenDropdownId(openDropdownId === user.id ? null : user.id)
-                        }
-                        className={`flex items-center space-x-2 text-xs font-semibold px-3 py-1.5 rounded-xl border transition cursor-pointer whitespace-nowrap ${roleConf.badgeStyle}`}
-                      >
-                        {updatingUserId === user.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
+                <div className="flex items-center space-x-2 shrink-0 self-start sm:self-auto">
+                  <div className="relative">
+                    {canEditThisUser ? (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setOpenDropdownId(openDropdownId === member.id ? null : member.id)
+                          }
+                          className={`flex items-center space-x-2 text-xs font-semibold px-3 py-1.5 rounded-xl border transition cursor-pointer whitespace-nowrap ${roleConf.badgeStyle}`}
+                        >
+                          {updatingUserId === member.user_id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <>
+                              <Shield className="h-3.5 w-3.5 shrink-0" />
+                              <span>{roleConf.label}</span>
+                              <ChevronDown className="h-3.5 w-3.5 opacity-60 ml-1 shrink-0" />
+                            </>
+                          )}
+                        </button>
+
+                        {openDropdownId === member.id && (
                           <>
-                            <Shield className="h-3.5 w-3.5 shrink-0" />
-                            <span>{roleConf.label}</span>
-                            <ChevronDown className="h-3.5 w-3.5 opacity-60 ml-1 shrink-0" />
+                            <div
+                              className="fixed inset-0 z-40"
+                              onClick={() => setOpenDropdownId(null)}
+                            />
+                            <div
+                              className={`absolute right-0 w-60 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 p-2 space-y-1 ${
+                                popUpward ? "bottom-full mb-2" : "top-full mt-2"
+                              }`}
+                            >
+                              {(Object.keys(ROLES) as AppRole[]).map((rKey) => {
+                                if (currentUserRole === "admin" && rKey === "superadmin") {
+                                  return null;
+                                }
+
+                                const conf = ROLES[rKey];
+                                const isSelected = member.role === rKey;
+
+                                return (
+                                  <button
+                                    key={rKey}
+                                    type="button"
+                                    onClick={() => handleRoleChange(member, rKey)}
+                                    className={`w-full text-left p-2 rounded-xl text-xs transition cursor-pointer flex flex-col space-y-0.5 ${
+                                      isSelected
+                                        ? "bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-semibold"
+                                        : "hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <span>{conf.label}</span>
+                                      {isSelected && <Check className="h-3.5 w-3.5" />}
+                                    </div>
+                                    <span className="text-[10px] opacity-75 font-normal">
+                                      {conf.description}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </>
                         )}
-                      </button>
+                      </div>
+                    ) : (
+                      <div
+                        className={`flex items-center space-x-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl border whitespace-nowrap ${roleConf.badgeStyle}`}
+                      >
+                        <Shield className="h-3.5 w-3.5 shrink-0" />
+                        <span>{roleConf.label}</span>
+                      </div>
+                    )}
+                  </div>
 
-                      {openDropdownId === user.id && (
-                        <div className="absolute right-0 top-full mt-1.5 w-56 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl z-50 p-2 space-y-1">
-                          {(Object.keys(ROLES) as AppRole[]).map((rKey) => {
-                            if (currentUserRole === "admin" && rKey === "superadmin") {
-                              return null;
-                            }
-
-                            const conf = ROLES[rKey];
-                            const isSelected = user.role === rKey;
-
-                            return (
-                              <button
-                                key={rKey}
-                                type="button"
-                                onClick={() => handleRoleChange(user.id, rKey)}
-                                className={`w-full text-left p-2 rounded-xl text-xs transition cursor-pointer flex flex-col space-y-0.5 ${
-                                  isSelected
-                                    ? "bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-semibold"
-                                    : "hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-                                }`}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <span>{conf.label}</span>
-                                  {isSelected && <Check className="h-3.5 w-3.5" />}
-                                </div>
-                                <span className="text-[10px] opacity-75 font-normal">
-                                  {conf.description}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div
-                      className={`flex items-center space-x-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl border whitespace-nowrap ${roleConf.badgeStyle}`}
+                  {canEditThisUser && !isSelf && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUpdateError("");
+                        setActionSuccess(null);
+                        setMemberToRemove(member);
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer"
+                      title="Remove member from workspace"
                     >
-                      <Shield className="h-3.5 w-3.5 shrink-0" />
-                      <span>{roleConf.label}</span>
-                    </div>
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   )}
                 </div>
               </div>
@@ -323,10 +817,341 @@ export default function TeamDirectoryTab() {
           })
         ) : (
           <div className="p-8 text-center text-xs text-slate-400">
-            No registered users found.
+            No matching members found.
           </div>
         )}
       </div>
+
+      {/* Pending Email Invitations Section */}
+      {emailInvitations.length > 0 && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs space-y-0">
+          <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-amber-50/30 dark:bg-amber-950/10">
+            <span className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+              <Clock className="h-3.5 w-3.5" />
+              Pending Email Invitations ({emailInvitations.length})
+            </span>
+          </div>
+
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {emailInvitations.map((inv) => {
+              const inviteUrl =
+                typeof window !== "undefined"
+                  ? `${window.location.origin}/join?token=${inv.token}`
+                  : `/join?token=${inv.token}`;
+
+              return (
+                <div
+                  key={inv.id}
+                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="h-8 w-8 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400 shrink-0">
+                      <Mail className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <span>{inv.email}</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Invited as <span className="font-semibold capitalize">{inv.role}</span> •
+                        Expires in 7 days
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2 shrink-0 self-end sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(inviteUrl);
+                        setActionSuccess("Invitation link copied to clipboard!");
+                        setTimeout(() => setActionSuccess(null), 2500);
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 transition cursor-pointer"
+                    >
+                      <Copy className="h-3 w-3" />
+                      <span>Copy Link</span>
+                    </button>
+
+                    {isUserAdminOrSuperadmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleRevokeInvite(inv.id, inv.email || "Invite")}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 transition cursor-pointer"
+                        title="Revoke invitation"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Remove Member Modal */}
+      {memberToRemove && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="h-11 w-11 rounded-2xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900 flex items-center justify-center text-rose-600 dark:text-rose-400">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+
+            <div className="space-y-1 text-left">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                Remove Member from Workspace?
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                Are you sure you want to remove{" "}
+                <strong className="text-slate-800 dark:text-slate-200">
+                  {memberToRemove.full_name || memberToRemove.email || "this user"}
+                </strong>{" "}
+                from <strong>{currentOrg?.name}</strong>? They will immediately lose access to all projects, clients, and workspace documents.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setMemberToRemove(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRemoveMember}
+                disabled={isRemoving}
+                className="flex items-center space-x-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:bg-rose-400 text-white text-xs font-semibold rounded-xl shadow-md transition cursor-pointer"
+              >
+                {isRemoving ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Removing...</span>
+                  </>
+                ) : (
+                  <span>Confirm Removal</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Workspace Modal */}
+      <DeleteWorkspaceModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+      />
+
+      {/* Invite Member Modal */}
+      {isInviteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="h-8 w-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200/70 dark:border-indigo-800/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                  <UserPlus className="h-4 w-4" />
+                </div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Invite to Workspace
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsInviteModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {!generatedLink && (
+              <div className="grid grid-cols-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInviteTab("email");
+                    setInviteError(null);
+                  }}
+                  className={`flex items-center justify-center space-x-1.5 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                    inviteTab === "email"
+                      ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <Mail className="h-3.5 w-3.5" />
+                  <span>Send to Email</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInviteTab("link");
+                    setInviteError(null);
+                  }}
+                  className={`flex items-center justify-center space-x-1.5 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                    inviteTab === "link"
+                      ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <Globe className="h-3.5 w-3.5" />
+                  <span>Public Share Link</span>
+                </button>
+              </div>
+            )}
+
+            {inviteError && (
+              <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl text-xs text-rose-600 dark:text-rose-400 flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{inviteError}</span>
+              </div>
+            )}
+
+            {!generatedLink ? (
+              <div className="space-y-4">
+                {inviteTab === "email" ? (
+                  <div className="space-y-1.5 text-left">
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Recipient Email Address <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="teammate@company.com"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleGenerateInvite();
+                        }
+                      }}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    />
+                    <p className="text-[11px] text-slate-400">
+                      An invitation email with the join link will be sent to this address.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200/70 dark:border-indigo-800/60 rounded-xl text-left space-y-1">
+                    <p className="text-xs font-semibold text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5">
+                      <Globe className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                      <span>Reusable Share Link</span>
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      Anyone with this link can join <strong>{currentOrg?.name}</strong> with the specified role below.
+                    </p>
+                  </div>
+                )}
+
+                <div className="space-y-1.5 text-left">
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Assigned Workspace Role
+                  </label>
+                  <select
+                    value={inviteRole}
+                    onChange={(e) => setInviteRole(e.target.value as AppRole)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer"
+                  >
+                    <option value="member">Member (Create & edit deliverables)</option>
+                    <option value="admin">Admin (Manage team & settings)</option>
+                    <option value="viewer">Viewer (Read-only access)</option>
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={(e) => void handleGenerateInvite(e)}
+                  disabled={isSubmittingInvite || (inviteTab === "email" && !inviteEmail.trim())}
+                  className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-md shadow-indigo-600/20"
+                >
+                  {isSubmittingInvite ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>{inviteTab === "email" ? "Sending email..." : "Generating link..."}</span>
+                    </>
+                  ) : inviteTab === "email" ? (
+                    <>
+                      <Send className="h-3.5 w-3.5" />
+                      <span>Send Email Invitation</span>
+                    </>
+                  ) : (
+                    <>
+                      <LinkIcon className="h-3.5 w-3.5" />
+                      <span>Create Public Share Link</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4 text-left">
+                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+                  <Check className="h-4 w-4 shrink-0" />
+                  <span>
+                    {inviteTab === "email"
+                      ? "Invitation email dispatched & link generated!"
+                      : "Public workspace share link generated!"}
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Shareable Invitation URL
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={generatedLink}
+                      className="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-600 dark:text-slate-300 truncate select-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCopyLink}
+                      className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shrink-0 transition cursor-pointer shadow-sm shadow-indigo-600/20"
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" />
+                          <span>Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  {inviteTab === "email" ? (
+                    <>
+                      An invite email was sent to <strong>{inviteEmail}</strong>. You can also share the link above manually if needed.
+                    </>
+                  ) : (
+                    <>
+                      Anyone who visits this link will be added to <strong>{currentOrg?.name}</strong> with the <strong>{inviteRole}</strong> role.
+                    </>
+                  )}
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => setIsInviteModalOpen(false)}
+                  className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

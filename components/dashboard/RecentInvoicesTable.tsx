@@ -19,7 +19,7 @@ interface RecentInvoicesTableProps {
 
 export default function RecentInvoicesTable({ invoices }: RecentInvoicesTableProps) {
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-5 shadow-sm space-y-4">
+    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3 sm:space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2">
           <CreditCard className="h-4 w-4 text-emerald-500" />
@@ -36,7 +36,7 @@ export default function RecentInvoicesTable({ invoices }: RecentInvoicesTablePro
         </Link>
       </div>
 
-      <div className="divide-y divide-slate-100 dark:divide-slate-800/80 overflow-x-auto">
+      <div className="divide-y divide-slate-100 dark:divide-slate-800/80">
         {invoices.length === 0 ? (
           <p className="p-4 text-center text-xs text-slate-400">
             No billing history recorded yet.
@@ -45,21 +45,26 @@ export default function RecentInvoicesTable({ invoices }: RecentInvoicesTablePro
           invoices.map((inv) => (
             <div
               key={inv.id}
-              className="py-3 flex items-center justify-between gap-4 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition px-1 rounded-xl"
+              className="py-2.5 sm:py-3 flex items-center justify-between gap-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition px-1 rounded-xl"
             >
-              <div className="min-w-0 space-y-0.5">
-                <div className="flex items-center space-x-2">
-                  <span className="text-xs font-bold text-slate-900 dark:text-white">
+              {/* Left Column: Number, Dot, Truncated Company Name, Due Date */}
+              <div className="min-w-0 flex-1 space-y-0.5">
+                <div className="flex items-center space-x-1.5 min-w-0">
+                  <span className="text-xs font-bold text-slate-900 dark:text-white shrink-0">
                     {inv.invoice_number}
                   </span>
-                  <span className="text-[11px] text-slate-400">• {inv.company_name}</span>
+                  <span className="text-slate-300 dark:text-slate-700 shrink-0">•</span>
+                  <span className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate">
+                    {inv.company_name}
+                  </span>
                 </div>
                 <p className="text-[10px] text-slate-400">
                   Due: {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "N/A"}
                 </p>
               </div>
 
-              <div className="flex items-center space-x-3 shrink-0">
+              {/* Right Column: Amount & Status Badge */}
+              <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
                 <span className="text-xs font-bold text-slate-900 dark:text-white">
                   ${inv.amount.toLocaleString()}
                 </span>

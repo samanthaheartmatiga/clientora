@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, Suspense } from "react";
+import React, { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { Plus } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { createClient } from "@/app/supabase/client";
+import { useWorkspace } from "@/context/WorkspaceContext";
 import { logWorkspaceActivity } from "@/lib/audit";
 import {
   Meeting,
@@ -14,8 +15,15 @@ import MeetingControls from "@/components/meetings/MeetingControls";
 import MeetingGrid from "@/components/meetings/MeetingGrid";
 import MeetingModal from "@/components/meetings/MeetingModal";
 
+interface DbClientOptionRecord {
+  id: string;
+  company_name: string;
+  contact_email?: string | null;
+}
+
 interface DbMeetingRecord {
   id: string;
+  organization_id?: string | null;
   client_id: string;
   project_id?: string | null;
   title: string;
@@ -39,6 +47,10 @@ interface DbMeetingRecord {
 }
 
 function MeetingsContent() {
+  const supabase = useMemo(() => createClient(), []);
+  const { currentOrg } = useWorkspace();
+  const currentOrgId = currentOrg?.id;
+
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
@@ -51,14 +63,24 @@ function MeetingsContent() {
   const [editingMeeting, setEditingMeeting] = useState<Meeting | null>(null);
 
   const refetchMeetings = useCallback(async () => {
+    if (!currentOrgId) {
+      setClientOptions([]);
+      setProjectOptions([]);
+      setMeetings([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data: clientsData } = await supabase
         .from("clients")
         .select("id, company_name, contact_email")
+        .eq("organization_id", currentOrgId)
         .order("company_name", { ascending: true });
 
       if (clientsData) {
-        const formattedClients: ClientOption[] = clientsData.map((c) => ({
+        const rows = clientsData as unknown as DbClientOptionRecord[];
+        const formattedClients: ClientOption[] = rows.map((c: DbClientOptionRecord) => ({
           id: c.id,
           company_name: c.company_name,
           email: c.contact_email || null,
@@ -69,6 +91,7 @@ function MeetingsContent() {
       const { data: projectsData } = await supabase
         .from("projects")
         .select("id, title, client_id")
+        .eq("organization_id", currentOrgId)
         .order("title", { ascending: true });
 
       if (projectsData) setProjectOptions(projectsData as ProjectOption[]);
@@ -76,6 +99,7 @@ function MeetingsContent() {
       const { data: rawMeetings, error } = await supabase
         .from("meetings")
         .select("*, clients(company_name, contact_email), projects(title)")
+        .eq("organization_id", currentOrgId)
         .order("meeting_date", { ascending: true });
 
       if (error) {
@@ -108,81 +132,56 @@ function MeetingsContent() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [supabase, currentOrgId]);
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadData() {
-      try {
-        const { data: clientsData } = await supabase
-          .from("clients")
-          .select("id, company_name, contact_email")
-          .order("company_name", { ascending: true });
-
-        if (isMounted && clientsData) {
-          const formattedClients: ClientOption[] = clientsData.map((c) => ({
-            id: c.id,
-            company_name: c.company_name,
-            email: c.contact_email || null,
-          }));
-          setClientOptions(formattedClients);
-        }
-
-        const { data: projectsData } = await supabase
-          .from("projects")
-          .select("id, title, client_id")
-          .order("title", { ascending: true });
-
-        if (isMounted && projectsData)
-          setProjectOptions(projectsData as ProjectOption[]);
-
-        const { data: rawMeetings, error } = await supabase
-          .from("meetings")
-          .select("*, clients(company_name, contact_email), projects(title)")
-          .order("meeting_date", { ascending: true });
-
-        if (error) {
-          console.error("Error fetching meetings:", error.message);
-        } else if (isMounted && rawMeetings) {
-          const formatted: Meeting[] = (
-            rawMeetings as unknown as DbMeetingRecord[]
-          ).map((m) => ({
-            id: m.id,
-            client_id: m.client_id,
-            project_id: m.project_id,
-            company_name: m.clients?.company_name || "Unassigned",
-            project_title: m.projects?.title || undefined,
-            title: m.title,
-            meeting_type: m.meeting_type || "Online",
-            meeting_date: m.meeting_date,
-            start_time: m.start_time,
-            duration_minutes: m.duration_minutes,
-            meeting_link: m.meeting_link,
-            location: m.location,
-            status: m.status,
-            notes: m.notes,
-            sequence: m.sequence || 0,
-            created_at: m.created_at,
-          }));
-          setMeetings(formatted);
-        }
-      } catch (err) {
-        console.error("Connection error:", err);
-      } finally {
-        if (isMounted) setLoading(false);
+      if (isMounted) {
+        await refetchMeetings();
       }
     }
+    void loadData();
 
-    loadData();
+    if (!currentOrgId) return;
 
     const channel = supabase
-      .channel("realtime-meetings-sync")
+      .channel(`realtime-meetings-sync-${currentOrgId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "meetings" },
+        {
+          event: "*",
+          schema: "public",
+          table: "meetings",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          if (isMounted) loadData();
+          if (isMounted) void refetchMeetings();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "projects",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
+        () => {
+          if (isMounted) void refetchMeetings();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "clients",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
+        () => {
+          if (isMounted) void refetchMeetings();
         }
       )
       .subscribe();
@@ -191,7 +190,7 @@ function MeetingsContent() {
       isMounted = false;
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [refetchMeetings, supabase, currentOrgId]);
 
   const filteredMeetings = meetings.filter((m) => {
     const matchesSearch =
@@ -218,6 +217,7 @@ function MeetingsContent() {
     id: string,
     newStatus: Meeting["status"]
   ) => {
+    if (!currentOrgId) return;
     const targetMeeting = meetings.find((m) => m.id === id);
 
     setMeetings((prev) =>
@@ -227,14 +227,16 @@ function MeetingsContent() {
     const { error } = await supabase
       .from("meetings")
       .update({ status: newStatus })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("organization_id", currentOrgId);
 
     if (error) {
       console.error("Error updating meeting status:", error.message);
       await refetchMeetings();
     } else if (targetMeeting) {
       await logWorkspaceActivity(
-        `Updated Meeting: ${targetMeeting.title} (Status: ${targetMeeting.status} → ${newStatus})`
+        `Updated Meeting: ${targetMeeting.title} (Status: ${targetMeeting.status} → ${newStatus})`,
+        currentOrgId
       );
     }
   };
@@ -253,6 +255,7 @@ function MeetingsContent() {
     notes?: string | null;
     notifyClient?: boolean;
   }) => {
+    if (!currentOrgId) return;
     const shouldNotify = formData.notifyClient;
     const payload = { ...formData };
     delete payload.notifyClient;
@@ -267,6 +270,7 @@ function MeetingsContent() {
         .from("meetings")
         .update({ ...payload, sequence })
         .eq("id", editingMeeting.id)
+        .eq("organization_id", currentOrgId)
         .select("id")
         .single();
 
@@ -283,12 +287,12 @@ function MeetingsContent() {
         } else if (editingMeeting.status !== formData.status) {
           actionDesc = `Updated Meeting: ${formData.title} (Status: ${editingMeeting.status} → ${formData.status})`;
         }
-        await logWorkspaceActivity(actionDesc);
+        await logWorkspaceActivity(actionDesc, currentOrgId);
       }
     } else {
       const res = await supabase
         .from("meetings")
-        .insert([{ ...payload, sequence: 0 }])
+        .insert([{ ...payload, organization_id: currentOrgId, sequence: 0 }])
         .select("id")
         .single();
 
@@ -297,7 +301,8 @@ function MeetingsContent() {
 
       if (!error) {
         await logWorkspaceActivity(
-          `Scheduled Meeting: ${formData.title} (${formData.meeting_date} ${formData.start_time})`
+          `Scheduled Meeting: ${formData.title} (${formData.meeting_date} ${formData.start_time})`,
+          currentOrgId
         );
       }
     }
@@ -317,6 +322,7 @@ function MeetingsContent() {
           .from("clients")
           .select("company_name, contact_email")
           .eq("id", payload.client_id)
+          .eq("organization_id", currentOrgId)
           .single();
 
         if (dbClient) {
@@ -356,6 +362,7 @@ function MeetingsContent() {
   };
 
   const handleDeleteMeeting = async (id: string) => {
+    if (!currentOrgId) return;
     const meetingToDelete = meetings.find((m) => m.id === id);
 
     if (meetingToDelete) {
@@ -371,6 +378,7 @@ function MeetingsContent() {
           .from("clients")
           .select("company_name, contact_email")
           .eq("id", meetingToDelete.client_id)
+          .eq("organization_id", currentOrgId)
           .single();
 
         if (dbClient) {
@@ -406,11 +414,17 @@ function MeetingsContent() {
       }
     }
 
-    const { error } = await supabase.from("meetings").delete().eq("id", id);
+    const { error } = await supabase
+      .from("meetings")
+      .delete()
+      .eq("id", id)
+      .eq("organization_id", currentOrgId);
+
     if (!error) {
       setMeetings((prev) => prev.filter((m) => m.id !== id));
       await logWorkspaceActivity(
-        `Cancelled Meeting: ${meetingToDelete?.title || "Meeting"}`
+        `Cancelled Meeting: ${meetingToDelete?.title || "Meeting"}`,
+        currentOrgId
       );
     } else {
       console.error("Error deleting meeting:", error.message);
@@ -425,7 +439,10 @@ function MeetingsContent() {
             Client Meetings
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Organize upcoming calls, attach video room links, and track meeting logs.
+            Organize upcoming calls, attach video room links, and track meeting logs for{" "}
+            <span className="font-semibold text-slate-700 dark:text-slate-200">
+              {currentOrg?.name || "current workspace"}
+            </span>.
           </p>
         </div>
         <button

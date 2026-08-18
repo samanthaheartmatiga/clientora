@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
+import path from "path";
+import fs from "fs";
+
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASS,
+  },
+});
 
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "RESEND_API_KEY is not defined in .env.local" },
-        { status: 500 }
-      );
-    }
-
-    const resend = new Resend(apiKey);
     const body = await req.json();
 
     const {
@@ -93,7 +94,7 @@ export async function POST(req: Request) {
       `DTSTART:${dtStartUtc}`,
       `DTEND:${dtEndUtc}`,
       `SUMMARY:${isCancellation ? `Cancelled: ${title}` : title}`,
-      `ORGANIZER;CN="${senderName}":mailto:notifications@resend.dev`,
+      `ORGANIZER;CN="${senderName}":mailto:${process.env.GMAIL_USER}`,
       notes ? `DESCRIPTION:${notes.replace(/\n/g, "\\n")}` : "",
       `LOCATION:${locationText}`,
       meetingLink ? `URL:${meetingLink}` : "",
@@ -104,17 +105,36 @@ export async function POST(req: Request) {
       .filter(Boolean)
       .join("\r\n");
 
-    const icsBuffer = Buffer.from(icsContent, "utf-8");
-
     const subjectLine = isCancellation
       ? `Meeting Cancelled: ${title}`
       : sequence > 0
       ? `Updated Meeting Details: ${title}`
       : `Meeting Scheduled: ${title}`;
 
+    const logoPath = path.join(process.cwd(), "public", "clientoralogo.png");
+    const logoExists = fs.existsSync(logoPath);
+
+    const attachments: nodemailer.SendMailOptions["attachments"] = [];
+    if (logoExists) {
+      attachments.push({
+        filename: "clientoralogo.png",
+        path: logoPath,
+        cid: "clientora_logo",
+      });
+    }
+
+    const brandHeader = logoExists
+      ? `<div style="margin-bottom: 20px; text-align: center;">
+           <img src="cid:clientora_logo" alt="ClientOra" width="48" height="48" style="display: inline-block; object-fit: contain; border-radius: 10px;" />
+         </div>`
+      : `<div style="margin-bottom: 20px; text-align: center;">
+           <div style="display: inline-block; background-color: #4f46e5; color: #ffffff; font-weight: bold; font-size: 16px; width: 44px; height: 44px; line-height: 44px; border-radius: 10px; text-align: center;">CO</div>
+         </div>`;
+
     const emailHtml = isCancellation
       ? `
         <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          ${brandHeader}
           <h2 style="color: #ef4444; margin-top: 0;">Meeting Cancelled</h2>
           <p style="color: #334155; font-size: 14px;">Hello <strong>${clientName}</strong>,</p>
           <p style="color: #334155; font-size: 14px;">The following meeting has been cancelled:</p>
@@ -130,6 +150,7 @@ export async function POST(req: Request) {
       `
       : `
         <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          ${brandHeader}
           <h2 style="color: #4f46e5; margin-top: 0;">${sequence > 0 ? "Updated Meeting Confirmation" : "Meeting Confirmation"}</h2>
           <p style="color: #334155; font-size: 14px;">Hello <strong>${clientName}</strong>,</p>
           <p style="color: #334155; font-size: 14px;">${sequence > 0 ? "The details for your scheduled meeting have been updated:" : "A meeting has been scheduled with you. Below are the details:"}</p>
@@ -161,24 +182,22 @@ export async function POST(req: Request) {
         </div>
       `;
 
-    const data = await resend.emails.send({
-      from: `${senderName} <onboarding@resend.dev>`,
-      to: [to],
+    await transporter.sendMail({
+      from: `"ClientOra" <${process.env.GMAIL_USER}>`,
+      to,
       subject: subjectLine,
       html: emailHtml,
-      attachments: [
-        {
-          filename: "invite.ics",
-          content: icsBuffer,
-          contentType: isCancellation
-            ? "text/calendar; method=CANCEL"
-            : "text/calendar; method=REQUEST",
-        },
-      ],
+      attachments,
+      icalEvent: {
+        filename: "invite.ics",
+        method,
+        content: icsContent,
+      },
     });
 
-    return NextResponse.json({ success: true, data });
+    return NextResponse.json({ success: true });
   } catch (error) {
+    console.error("Failed to send meeting email:", error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }

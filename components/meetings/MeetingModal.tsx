@@ -1,7 +1,19 @@
 "use client";
 
-import React, { useState } from "react";
-import { X, Loader2, Video, MapPin, Globe, Mail, AlertCircle } from "lucide-react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
+import {
+  X,
+  Loader2,
+  Video,
+  MapPin,
+  Globe,
+  Mail,
+  AlertCircle,
+  Calendar as CalendarIcon,
+  Clock as ClockIcon,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { Meeting, ClientOption, ProjectOption } from "./types";
 import { useUserRole } from "@/hooks/useUserRole";
 import { canPerformAction } from "@/lib/permissions";
@@ -26,6 +38,34 @@ interface MeetingModalProps {
     notes?: string | null;
     notifyClient?: boolean;
   }) => Promise<void>;
+}
+
+const MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+const HOURS = Array.from({ length: 12 }, (_, i) => i + 1);
+const QUICK_MINUTES = ["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"];
+
+function parseTime24h(timeStr: string) {
+  if (!timeStr) return { hour12: 10, minute: 0, period: "AM" as const };
+  const [h, m] = timeStr.split(":").map(Number);
+  const period = h >= 12 ? ("PM" as const) : ("AM" as const);
+  const hour12 = h % 12 || 12;
+  return { hour12, minute: isNaN(m) ? 0 : m, period };
+}
+
+function toTime24h(hour12: number, minute: number, period: "AM" | "PM") {
+  let h = hour12 % 12;
+  if (period === "PM") h += 12;
+  return `${String(h).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function formatTime12h(timeStr: string) {
+  if (!timeStr) return "10:00 AM";
+  const { hour12, minute, period } = parseTime24h(timeStr);
+  return `${String(hour12).padStart(2, "0")}:${String(minute).padStart(2, "0")} ${period}`;
 }
 
 export default function MeetingModal({
@@ -71,6 +111,40 @@ export default function MeetingModal({
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
+  // Custom Picker States
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+  const [isTimePickerOpen, setIsTimePickerOpen] = useState(false);
+
+  // Derive active time parts directly without useEffect state duplication
+  const { hour12: selectedHour, minute: selectedMinute, period: selectedPeriod } = useMemo(
+    () => parseTime24h(startTime),
+    [startTime]
+  );
+
+  const initialDateObj = useMemo(() => {
+    const d = new Date(meetingDate);
+    return isNaN(d.getTime()) ? new Date() : d;
+  }, [meetingDate]);
+
+  const [calYear, setCalYear] = useState(initialDateObj.getFullYear());
+  const [calMonth, setCalMonth] = useState(initialDateObj.getMonth());
+
+  const datePickerRef = useRef<HTMLDivElement>(null);
+  const timePickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (datePickerRef.current && !datePickerRef.current.contains(event.target as Node)) {
+        setIsDatePickerOpen(false);
+      }
+      if (timePickerRef.current && !timePickerRef.current.contains(event.target as Node)) {
+        setIsTimePickerOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const effectiveClientId = clientId || clientOptions[0]?.id || "";
 
   if (!isOpen) return null;
@@ -81,6 +155,38 @@ export default function MeetingModal({
   const filteredProjects = projectOptions.filter(
     (p) => !effectiveClientId || p.client_id === effectiveClientId
   );
+
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const firstDayOfWeek = new Date(calYear, calMonth, 1).getDay();
+
+  const handlePrevMonth = () => {
+    if (calMonth === 0) {
+      setCalMonth(11);
+      setCalYear((y) => y - 1);
+    } else {
+      setCalMonth((m) => m - 1);
+    }
+  };
+
+  const handleNextMonth = () => {
+    if (calMonth === 11) {
+      setCalMonth(0);
+      setCalYear((y) => y + 1);
+    } else {
+      setCalMonth((m) => m + 1);
+    }
+  };
+
+  const handleSelectDay = (day: number) => {
+    const mStr = String(calMonth + 1).padStart(2, "0");
+    const dStr = String(day).padStart(2, "0");
+    setMeetingDate(`${calYear}-${mStr}-${dStr}`);
+    setIsDatePickerOpen(false);
+  };
+
+  const updateTimeValue = (h: number, m: number, p: "AM" | "PM") => {
+    setStartTime(toTime24h(h, m, p));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,12 +216,13 @@ export default function MeetingModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 dark:bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/90 rounded-2xl w-full max-w-lg p-5 sm:p-6 shadow-2xl dark:shadow-indigo-950/40 relative transition-colors duration-200 max-h-[90vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-md animate-in fade-in duration-150">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-3xl w-full max-w-xl p-6 sm:p-7 shadow-2xl dark:shadow-indigo-950/50 relative transition-all duration-200 max-h-[92vh] flex flex-col overflow-hidden">
+        
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-slate-200 dark:border-slate-800/80 pb-4 shrink-0">
-          <div className="flex items-center space-x-3">
-            <div className="h-10 w-10 rounded-xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+        <div className="flex items-start justify-between border-b border-slate-100 dark:border-slate-800/80 pb-4.5 shrink-0">
+          <div className="flex items-center space-x-3.5">
+            <div className="h-11 w-11 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200/70 dark:border-indigo-800/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0 shadow-xs">
               <Video className="h-5 w-5" />
             </div>
             <div>
@@ -128,15 +235,16 @@ export default function MeetingModal({
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {!loading && !hasAccess && (
-          <div className="mt-4 flex items-center space-x-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl p-3 text-xs text-rose-600 dark:text-rose-400 shrink-0">
+          <div className="mt-4 flex items-center space-x-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-2xl p-3 text-xs text-rose-600 dark:text-rose-400 shrink-0">
             <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
             <span>
               Permission Denied: Your role ({role}) cannot {editingMeeting ? "edit" : "schedule"} meetings.
@@ -147,24 +255,25 @@ export default function MeetingModal({
         {/* Scrollable Form Body */}
         <form
           onSubmit={handleSubmit}
-          className="space-y-4 overflow-y-auto pt-4 pr-1 scrollbar-none [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+          className="space-y-4.5 overflow-y-auto pt-4.5 pr-1.5 scrollbar-none [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
+          {/* Meeting Mode Switcher */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
               Meeting Mode
             </label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2.5 p-1 bg-slate-100/80 dark:bg-slate-950/60 border border-slate-200/70 dark:border-slate-800/80 rounded-2xl">
               <button
                 type="button"
                 disabled={!hasAccess}
                 onClick={() => setMeetingType("Online")}
-                className={`flex items-center justify-center space-x-2 py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
+                className={`flex items-center justify-center space-x-2 py-2 px-3.5 rounded-xl text-xs font-semibold transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                   meetingType === "Online"
-                    ? "bg-indigo-600/10 border-indigo-500 text-indigo-600 dark:text-indigo-400"
-                    : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 text-slate-500 dark:text-slate-400 hover:border-slate-300"
+                    ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm border border-slate-200/60 dark:border-slate-700/60"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
                 }`}
               >
-                <Globe className="h-4 w-4" />
+                <Globe className="h-3.5 w-3.5" />
                 <span>Online Call</span>
               </button>
 
@@ -172,21 +281,22 @@ export default function MeetingModal({
                 type="button"
                 disabled={!hasAccess}
                 onClick={() => setMeetingType("In-Person")}
-                className={`flex items-center justify-center space-x-2 py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
+                className={`flex items-center justify-center space-x-2 py-2 px-3.5 rounded-xl text-xs font-semibold transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                   meetingType === "In-Person"
-                    ? "bg-indigo-600/10 border-indigo-500 text-indigo-600 dark:text-indigo-400"
-                    : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 text-slate-500 dark:text-slate-400 hover:border-slate-300"
+                    ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm border border-slate-200/60 dark:border-slate-700/60"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
                 }`}
               >
-                <MapPin className="h-4 w-4" />
+                <MapPin className="h-3.5 w-3.5" />
                 <span>Face-to-Face</span>
               </button>
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-              Meeting Title
+          {/* Meeting Title */}
+          <div className="space-y-1.5 text-left">
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Meeting Title <span className="text-rose-500">*</span>
             </label>
             <input
               type="text"
@@ -195,14 +305,15 @@ export default function MeetingModal({
               placeholder="e.g. Website Scope Kick-off Call"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                Client Company
+          {/* Client & Project Selectors */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            <div className="space-y-1.5 text-left">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Client Company <span className="text-rose-500">*</span>
               </label>
               <select
                 required
@@ -212,32 +323,32 @@ export default function MeetingModal({
                   setClientId(e.target.value);
                   setProjectId("");
                 }}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <option value="" disabled>
+                <option value="" disabled className="dark:bg-slate-900">
                   Select Client
                 </option>
                 {clientOptions.map((c) => (
-                  <option key={c.id} value={c.id}>
+                  <option key={c.id} value={c.id} className="dark:bg-slate-900">
                     {c.company_name}
                   </option>
                 ))}
               </select>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                Linked Project (Optional)
+            <div className="space-y-1.5 text-left">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Linked Project <span className="text-[10px] text-slate-400 font-normal">(Optional)</span>
               </label>
               <select
                 disabled={!hasAccess}
                 value={projectId}
                 onChange={(e) => setProjectId(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <option value="">None / General Call</option>
+                <option value="" className="dark:bg-slate-900">None / General Call</option>
                 {filteredProjects.map((p) => (
-                  <option key={p.id} value={p.id}>
+                  <option key={p.id} value={p.id} className="dark:bg-slate-900">
                     {p.title}
                   </option>
                 ))}
@@ -245,58 +356,245 @@ export default function MeetingModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                Date
+          {/* Date, Custom Exact Time & Duration Section */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+            {/* Compact Custom Date Picker */}
+            <div className="space-y-1.5 text-left relative" ref={datePickerRef}>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Date <span className="text-rose-500">*</span>
               </label>
-              <input
-                type="date"
-                required
+              <button
+                type="button"
                 disabled={!hasAccess}
-                value={meetingDate}
-                onChange={(e) => setMeetingDate(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-              />
+                onClick={() => {
+                  setIsDatePickerOpen((prev) => !prev);
+                  setIsTimePickerOpen(false);
+                }}
+                className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2.5 text-xs text-slate-900 dark:text-slate-100 flex items-center justify-between hover:border-indigo-500 transition cursor-pointer disabled:opacity-50"
+              >
+                <span className="truncate">{meetingDate || "Select Date"}</span>
+                <CalendarIcon className="h-4 w-4 text-indigo-500 shrink-0 ml-1" />
+              </button>
+
+              {isDatePickerOpen && (
+                <div className="absolute left-0 bottom-full mb-2 z-50 w-56 p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl animate-in fade-in zoom-in-95">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-100 dark:border-slate-800">
+                    <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
+                      {MONTH_NAMES[calMonth]} {calYear}
+                    </span>
+                    <div className="flex items-center space-x-1">
+                      <button
+                        type="button"
+                        onClick={handlePrevMonth}
+                        className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleNextMonth}
+                        className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                      >
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-7 gap-0.5 text-center mt-1.5">
+                    {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+                      <span key={d} className="text-[9px] font-semibold text-slate-400">
+                        {d}
+                      </span>
+                    ))}
+                    {Array.from({ length: firstDayOfWeek }).map((_, i) => (
+                      <div key={`empty-${i}`} className="h-5" />
+                    ))}
+                    {Array.from({ length: daysInMonth }).map((_, i) => {
+                      const day = i + 1;
+                      const mStr = String(calMonth + 1).padStart(2, "0");
+                      const dStr = String(day).padStart(2, "0");
+                      const dateFormatted = `${calYear}-${mStr}-${dStr}`;
+                      const isSelected = dateFormatted === meetingDate;
+
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={() => handleSelectDay(day)}
+                          className={`h-5 w-5 mx-auto rounded-md text-[11px] font-medium flex items-center justify-center transition cursor-pointer ${
+                            isSelected
+                              ? "bg-indigo-600 text-white font-bold shadow-xs shadow-indigo-600/30"
+                              : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                          }`}
+                        >
+                          {day}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                Start Time
+            {/* Compact Custom Exact Time Picker */}
+            <div className="space-y-1.5 text-left relative" ref={timePickerRef}>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Start Time <span className="text-rose-500">*</span>
               </label>
-              <input
-                type="time"
-                required
+              <button
+                type="button"
                 disabled={!hasAccess}
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-              />
+                onClick={() => {
+                  setIsTimePickerOpen((prev) => !prev);
+                  setIsDatePickerOpen(false);
+                }}
+                className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2.5 text-xs text-slate-900 dark:text-slate-100 flex items-center justify-between hover:border-indigo-500 transition cursor-pointer disabled:opacity-50"
+              >
+                <span>{formatTime12h(startTime)}</span>
+                <ClockIcon className="h-4 w-4 text-indigo-500 shrink-0 ml-1" />
+              </button>
+
+              {isTimePickerOpen && (
+                <div className="absolute left-0 sm:right-0 sm:left-auto bottom-full mb-2 z-50 w-56 p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl animate-in fade-in zoom-in-95 space-y-2">
+                  {/* Digital Display & AM/PM Switcher */}
+                  <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-950/70 p-1.5 rounded-xl border border-slate-200/80 dark:border-slate-800">
+                    <div className="flex items-center space-x-1 pl-1">
+                      <input
+                        type="number"
+                        min="1"
+                        max="12"
+                        value={selectedHour}
+                        onChange={(e) => {
+                          const val = Math.max(1, Math.min(12, Number(e.target.value) || 1));
+                          updateTimeValue(val, selectedMinute, selectedPeriod);
+                        }}
+                        className="w-8 text-center font-bold text-xs bg-transparent text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded"
+                      />
+                      <span className="font-bold text-slate-400 text-xs">:</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="59"
+                        value={String(selectedMinute).padStart(2, "0")}
+                        onChange={(e) => {
+                          const val = Math.max(0, Math.min(59, Number(e.target.value) || 0));
+                          updateTimeValue(selectedHour, val, selectedPeriod);
+                        }}
+                        className="w-8 text-center font-bold text-xs bg-transparent text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded"
+                      />
+                    </div>
+
+                    <div className="flex items-center space-x-0.5 bg-slate-200/70 dark:bg-slate-800 p-0.5 rounded-lg">
+                      <button
+                        type="button"
+                        onClick={() => updateTimeValue(selectedHour, selectedMinute, "AM")}
+                        className={`px-1.5 py-0.5 text-[10px] font-bold rounded transition cursor-pointer ${
+                          selectedPeriod === "AM"
+                            ? "bg-indigo-600 text-white shadow-xs"
+                            : "text-slate-600 dark:text-slate-400"
+                        }`}
+                      >
+                        AM
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateTimeValue(selectedHour, selectedMinute, "PM")}
+                        className={`px-1.5 py-0.5 text-[10px] font-bold rounded transition cursor-pointer ${
+                          selectedPeriod === "PM"
+                            ? "bg-indigo-600 text-white shadow-xs"
+                            : "text-slate-600 dark:text-slate-400"
+                        }`}
+                      >
+                        PM
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Hour Quick Selection */}
+                  <div className="space-y-0.5">
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                      Hour
+                    </span>
+                    <div className="grid grid-cols-6 gap-0.5">
+                      {HOURS.map((h) => (
+                        <button
+                          key={h}
+                          type="button"
+                          onClick={() => updateTimeValue(h, selectedMinute, selectedPeriod)}
+                          className={`h-5 rounded-md text-[11px] font-semibold transition cursor-pointer ${
+                            selectedHour === h
+                              ? "bg-indigo-600 text-white shadow-xs shadow-indigo-600/30"
+                              : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                          }`}
+                        >
+                          {h}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Minute Quick Selection */}
+                  <div className="space-y-0.5">
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                      Minute
+                    </span>
+                    <div className="grid grid-cols-6 gap-0.5">
+                      {QUICK_MINUTES.map((m) => {
+                        const mNum = Number(m);
+                        return (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => updateTimeValue(selectedHour, mNum, selectedPeriod)}
+                            className={`h-5 rounded-md text-[10px] font-semibold transition cursor-pointer ${
+                              selectedMinute === mNum
+                                ? "bg-indigo-600 text-white shadow-xs shadow-indigo-600/30"
+                                : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                            }`}
+                          >
+                            :{m}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsTimePickerOpen(false)}
+                    className="w-full py-1 bg-indigo-600 text-white text-[11px] font-bold rounded-lg shadow-xs transition cursor-pointer"
+                  >
+                    Set Time
+                  </button>
+                </div>
+              )}
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                Duration (Mins)
+            {/* Duration */}
+            <div className="space-y-1.5 text-left">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Duration <span className="text-[10px] text-slate-400 font-normal">(Mins)</span>
               </label>
               <input
                 type="number"
-                min="15"
-                step="15"
+                min="5"
+                step="5"
                 disabled={!hasAccess}
                 value={durationMinutes}
                 onChange={(e) => setDurationMinutes(Number(e.target.value))}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
           </div>
 
+          {/* Video Link or Location */}
           {meetingType === "Online" ? (
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
+            <div className="space-y-1.5 text-left">
+              <div className="flex items-center justify-between">
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Video Call URL (Google Meet / Zoom / Teams)
+                  Video Call URL
                 </label>
-                <span className="text-[10px] text-slate-400">Optional</span>
+                <span className="text-[10px] text-slate-400 font-medium">Google Meet / Zoom / Teams</span>
               </div>
               <input
                 type="text"
@@ -304,16 +602,16 @@ export default function MeetingModal({
                 placeholder="https://meet.google.com/abc-defg-hij"
                 value={meetingLink}
                 onChange={(e) => setMeetingLink(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
           ) : (
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
+            <div className="space-y-1.5 text-left">
+              <div className="flex items-center justify-between">
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                   Physical Location / Office Address
                 </label>
-                <span className="text-[10px] text-slate-400">Optional</span>
+                <span className="text-[10px] text-slate-400 font-medium">Optional</span>
               </div>
               <input
                 type="text"
@@ -321,49 +619,52 @@ export default function MeetingModal({
                 placeholder="e.g. Starbucks BGC, Building 2 Conference Room..."
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
           )}
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-              Status
+          {/* Status */}
+          <div className="space-y-1.5 text-left">
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Meeting Status
             </label>
             <select
               disabled={!hasAccess}
               value={status}
               onChange={(e) => setStatus(e.target.value as Meeting["status"])}
-              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <option value="Scheduled">Scheduled</option>
-              <option value="Completed">Completed</option>
-              <option value="Canceled">Canceled</option>
+              <option value="Scheduled" className="dark:bg-slate-900">Scheduled</option>
+              <option value="Completed" className="dark:bg-slate-900">Completed</option>
+              <option value="Canceled" className="dark:bg-slate-900">Canceled</option>
             </select>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-              Agenda / Notes (Optional)
+          {/* Notes */}
+          <div className="space-y-1.5 text-left">
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Agenda & Notes <span className="text-[10px] text-slate-400 font-normal">(Optional)</span>
             </label>
             <textarea
               rows={3}
               disabled={!hasAccess}
-              placeholder="Call agenda or post-meeting summary..."
+              placeholder="Call agenda, talking points, or post-meeting action items..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition disabled:opacity-50 disabled:cursor-not-allowed resize-none"
             />
           </div>
 
-          <div className="pt-1">
-            <label className="flex items-center space-x-2.5 cursor-pointer">
+          {/* Client Notification Checkbox */}
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-800 rounded-2xl">
+            <label className="flex items-center space-x-2.5 cursor-pointer select-none">
               <input
                 type="checkbox"
                 disabled={!hasAccess}
                 checked={notifyClient}
                 onChange={(e) => setNotifyClient(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                className="h-4 w-4 rounded-md border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500/20 dark:bg-slate-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <span className="text-xs text-slate-700 dark:text-slate-300 font-medium flex items-center space-x-1.5">
                 <Mail className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
@@ -372,21 +673,28 @@ export default function MeetingModal({
             </label>
           </div>
 
-          <div className="pt-3 pb-1 flex items-center justify-end space-x-2.5 border-t border-slate-200 dark:border-slate-800/80 shrink-0">
+          {/* Footer Actions */}
+          <div className="pt-3 pb-1 flex items-center justify-end space-x-2.5 border-t border-slate-100 dark:border-slate-800 shrink-0">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer"
+              className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting || !hasAccess || loading}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-lg shadow-indigo-600/25 transition flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow-md shadow-indigo-600/20 transition flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
-              {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              <span>{editingMeeting ? "Save Changes" : "Schedule Meeting"}</span>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <span>{editingMeeting ? "Save Changes" : "Schedule Meeting"}</span>
+              )}
             </button>
           </div>
         </form>

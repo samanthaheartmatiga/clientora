@@ -16,9 +16,11 @@ import {
   Search,
 } from "lucide-react";
 import { createClient } from "@/app/supabase/client";
+import { useWorkspace } from "@/context/WorkspaceContext";
 
 export interface AuditLogItem {
   id: string;
+  organization_id?: string | null;
   user_id?: string | null;
   full_name: string;
   email: string;
@@ -30,6 +32,7 @@ export interface AuditLogItem {
 
 interface RawAuditLogRow {
   id: string;
+  organization_id?: string | null;
   user_id?: string | null;
   user_name?: string | null;
   user_email?: string | null;
@@ -49,6 +52,8 @@ const emptySubscribe = () => () => {};
 
 export default function AccessHistoryTab() {
   const supabase = useMemo(() => createClient(), []);
+  const { currentOrg } = useWorkspace();
+  const currentOrgId = currentOrg?.id;
 
   const [logs, setLogs] = useState<AuditLogItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -64,12 +69,19 @@ export default function AccessHistoryTab() {
   );
 
   const fetchAccessLogs = useCallback(async () => {
+    if (!currentOrgId) {
+      setLogs([]);
+      setIsLoading(false);
+      setIsRefreshing(false);
+      return;
+    }
+
     try {
-      // 1. Fetch audit logs and profiles in parallel using the authenticated client
       const [logsRes, profilesRes] = await Promise.all([
         supabase
           .from("audit_logs")
-          .select("id, user_id, user_name, user_email, action, device_info, ip_address, created_at")
+          .select("id, organization_id, user_id, user_name, user_email, action, device_info, ip_address, created_at")
+          .eq("organization_id", currentOrgId)
           .order("created_at", { ascending: false })
           .limit(100),
         supabase
@@ -82,7 +94,6 @@ export default function AccessHistoryTab() {
         return;
       }
 
-      // 2. Build dictionary of current profile info
       const profileMap = new Map<string, { full_name: string; email: string }>();
       if (profilesRes.data) {
         (profilesRes.data as ProfileMapItem[]).forEach((p) => {
@@ -93,7 +104,6 @@ export default function AccessHistoryTab() {
         });
       }
 
-      // 3. Map logs so all historical records reflect the current user's profile name
       const rows = (logsRes.data || []) as RawAuditLogRow[];
       const formatted: AuditLogItem[] = rows.map((log) => {
         const liveProfile = log.user_id ? profileMap.get(log.user_id) : null;
@@ -102,6 +112,7 @@ export default function AccessHistoryTab() {
 
         return {
           id: log.id,
+          organization_id: log.organization_id,
           user_id: log.user_id,
           full_name: resolvedName,
           email: resolvedEmail,
@@ -119,7 +130,7 @@ export default function AccessHistoryTab() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [supabase]);
+  }, [supabase, currentOrgId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -130,10 +141,15 @@ export default function AccessHistoryTab() {
     init();
 
     const channel = supabase
-      .channel("realtime-audit-logs-history-tab")
+      .channel(`realtime-audit-logs-${currentOrgId || "default"}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "audit_logs" },
+        {
+          event: "*",
+          schema: "public",
+          table: "audit_logs",
+          filter: currentOrgId ? `organization_id=eq.${currentOrgId}` : undefined,
+        },
         () => {
           if (isMounted) fetchAccessLogs();
         }
@@ -151,7 +167,7 @@ export default function AccessHistoryTab() {
       isMounted = false;
       supabase.removeChannel(channel);
     };
-  }, [fetchAccessLogs, supabase]);
+  }, [fetchAccessLogs, supabase, currentOrgId]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -269,7 +285,10 @@ export default function AccessHistoryTab() {
             <span>Workspace Access & Audit Log</span>
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Timestamped activity log showing team check-ins, record edits, and workspace changes.
+            Timestamped activity log showing team check-ins, record edits, and workspace changes for{" "}
+            <span className="font-semibold text-slate-700 dark:text-slate-200">
+              {currentOrg?.name || "current workspace"}
+            </span>.
           </p>
         </div>
 
@@ -318,7 +337,7 @@ export default function AccessHistoryTab() {
 
       {logs.length === 0 ? (
         <div className="py-12 text-center text-xs text-slate-400 italic">
-          No activity logs recorded yet.
+          No activity logs recorded in {currentOrg?.name || "this workspace"} yet.
         </div>
       ) : (
         <div className="space-y-4">

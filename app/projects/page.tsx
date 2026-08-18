@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, Suspense } from "react";
+import React, { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { Plus } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { createClient } from "@/app/supabase/client";
+import { useWorkspace } from "@/context/WorkspaceContext";
 import { logWorkspaceActivity } from "@/lib/audit";
 import { getNextInvoiceNumber } from "@/lib/invoices";
 import { Project, ClientOption } from "@/components/projects/types";
@@ -13,6 +14,7 @@ import ProjectModal from "@/components/projects/ProjectModal";
 
 interface DbProjectRecord {
   id: string;
+  organization_id?: string | null;
   client_id: string;
   title: string;
   status: Project["status"];
@@ -26,6 +28,10 @@ interface DbProjectRecord {
 }
 
 function ProjectsContent() {
+  const supabase = useMemo(() => createClient(), []);
+  const { currentOrg } = useWorkspace();
+  const currentOrgId = currentOrg?.id;
+
   const [projects, setProjects] = useState<Project[]>([]);
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -37,10 +43,18 @@ function ProjectsContent() {
   const [editingProject, setEditingProject] = useState<Project | null>(null);
 
   const fetchProjectsData = useCallback(async () => {
+    if (!currentOrgId) {
+      setClientOptions([]);
+      setProjects([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data: clientsData, error: clientsError } = await supabase
         .from("clients")
         .select("id, company_name")
+        .eq("organization_id", currentOrgId)
         .order("company_name", { ascending: true });
 
       if (clientsError) {
@@ -52,6 +66,7 @@ function ProjectsContent() {
       const { data: projectsData, error: projectsError } = await supabase
         .from("projects")
         .select("*, clients(company_name)")
+        .eq("organization_id", currentOrgId)
         .order("created_at", { ascending: false });
 
       if (projectsError) {
@@ -76,66 +91,45 @@ function ProjectsContent() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [supabase, currentOrgId]);
 
   useEffect(() => {
     let ignore = false;
 
     async function initialize() {
-      try {
-        const { data: clientsData } = await supabase
-          .from("clients")
-          .select("id, company_name")
-          .order("company_name", { ascending: true });
-
-        const { data: projectsData } = await supabase
-          .from("projects")
-          .select("*, clients(company_name)")
-          .order("created_at", { ascending: false });
-
-        if (!ignore) {
-          if (clientsData) setClientOptions(clientsData as ClientOption[]);
-          if (projectsData) {
-            const formatted: Project[] = (
-              projectsData as unknown as DbProjectRecord[]
-            ).map((p) => ({
-              id: p.id,
-              client_id: p.client_id,
-              company_name: p.clients?.company_name || "Unassigned",
-              title: p.title,
-              status: p.status,
-              budget: Number(p.budget),
-              due_date: p.due_date || "",
-              created_at: p.created_at,
-            }));
-            setProjects(formatted);
-          }
-          setLoading(false);
-        }
-      } catch (err) {
-        if (!ignore) {
-          console.error("Init projects error:", err);
-          setLoading(false);
-        }
+      if (!ignore) {
+        await fetchProjectsData();
       }
     }
 
-    initialize();
+    void initialize();
+
+    if (!currentOrgId) return;
 
     const channel = supabase
-      .channel("realtime-projects-page")
+      .channel(`realtime-projects-page-${currentOrgId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "projects" },
+        {
+          event: "*",
+          schema: "public",
+          table: "projects",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          if (!ignore) fetchProjectsData();
+          if (!ignore) void fetchProjectsData();
         }
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "clients" },
+        {
+          event: "*",
+          schema: "public",
+          table: "clients",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          if (!ignore) fetchProjectsData();
+          if (!ignore) void fetchProjectsData();
         }
       )
       .subscribe();
@@ -144,7 +138,7 @@ function ProjectsContent() {
       ignore = true;
       supabase.removeChannel(channel);
     };
-  }, [fetchProjectsData]);
+  }, [fetchProjectsData, supabase, currentOrgId]);
 
   const filteredProjects = projects.filter((project) => {
     const matchesSearch =
@@ -174,6 +168,8 @@ function ProjectsContent() {
     budget: number;
     due_date: string;
   }) => {
+    if (!currentOrgId) return;
+
     if (!formData.client_id || formData.client_id.trim() === "") {
       console.error("Validation Error: Client is required.");
       return;
@@ -203,7 +199,8 @@ function ProjectsContent() {
         const { error: updateError } = await supabase
           .from("projects")
           .update(updatePayload)
-          .eq("id", editingProject.id);
+          .eq("id", editingProject.id)
+          .eq("organization_id", currentOrgId);
 
         if (updateError) {
           console.error("Supabase error updating project:", updateError.message);
@@ -213,7 +210,8 @@ function ProjectsContent() {
         const { data: existingInvoices } = await supabase
           .from("invoices")
           .select("id")
-          .eq("project_id", editingProject.id);
+          .eq("project_id", editingProject.id)
+          .eq("organization_id", currentOrgId);
 
         if (existingInvoices && existingInvoices.length > 0) {
           await supabase
@@ -224,11 +222,13 @@ function ProjectsContent() {
               due_date: fallbackInvoiceDueDate,
               updated_at: nowIsoString,
             })
-            .eq("id", existingInvoices[0].id);
+            .eq("id", existingInvoices[0].id)
+            .eq("organization_id", currentOrgId);
         } else if (updatePayload.budget > 0) {
           const nextInvNumber = await getNextInvoiceNumber(supabase);
           await supabase.from("invoices").insert([
             {
+              organization_id: currentOrgId,
               project_id: editingProject.id,
               client_id: updatePayload.client_id,
               invoice_number: nextInvNumber,
@@ -244,9 +244,10 @@ function ProjectsContent() {
         if (editingProject.status !== formData.status) {
           actionDesc = `Updated Project: ${formData.title} (Status: ${editingProject.status} → ${formData.status})`;
         }
-        await logWorkspaceActivity(actionDesc);
+        await logWorkspaceActivity(actionDesc, currentOrgId);
       } else {
         const insertPayload = {
+          organization_id: currentOrgId,
           client_id: formData.client_id,
           title: formData.title.trim(),
           status: formData.status,
@@ -271,6 +272,7 @@ function ProjectsContent() {
             const nextInvNumber = await getNextInvoiceNumber(supabase);
             const { error: invoiceError } = await supabase.from("invoices").insert([
               {
+                organization_id: currentOrgId,
                 project_id: createdProject.id,
                 client_id: insertPayload.client_id,
                 invoice_number: nextInvNumber,
@@ -289,7 +291,7 @@ function ProjectsContent() {
           }
         }
 
-        await logWorkspaceActivity(`Created Project: ${formData.title}`);
+        await logWorkspaceActivity(`Created Project: ${formData.title}`, currentOrgId);
       }
 
       setIsModalOpen(false);
@@ -300,14 +302,21 @@ function ProjectsContent() {
   };
 
   const handleDeleteProject = async (id: string) => {
+    if (!currentOrgId) return;
     const targetProject = projects.find((p) => p.id === id);
 
     try {
-      const { error } = await supabase.from("projects").delete().eq("id", id);
+      const { error } = await supabase
+        .from("projects")
+        .delete()
+        .eq("id", id)
+        .eq("organization_id", currentOrgId);
+
       if (!error) {
         setProjects((prev) => prev.filter((p) => p.id !== id));
         await logWorkspaceActivity(
-          `Deleted Project: ${targetProject?.title || "Project Record"}`
+          `Deleted Project: ${targetProject?.title || "Project Record"}`,
+          currentOrgId
         );
       } else {
         console.error("Failed to delete project:", error.message);
@@ -325,7 +334,10 @@ function ProjectsContent() {
             Active Projects
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Track active client deliverables, timelines, and financial allocations.
+            Track active client deliverables, timelines, and financial allocations for{" "}
+            <span className="font-semibold text-slate-700 dark:text-slate-200">
+              {currentOrg?.name || "current workspace"}
+            </span>.
           </p>
         </div>
         <button

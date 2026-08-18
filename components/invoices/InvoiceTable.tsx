@@ -39,17 +39,20 @@ export default function InvoiceTable({
   const hasActions = canEdit || canDelete;
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden shadow-sm">
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs">
-          <thead className="bg-slate-50 dark:bg-slate-950/50 border-b border-slate-200 dark:border-slate-800/80 text-slate-500 dark:text-slate-400 font-semibold">
+    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden shadow-sm transition-colors duration-200">
+      {/* Invisible scrollbar container with smooth horizontal swipe preserved */}
+      <div className="overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] scrollbar-none">
+        <table className="w-full text-left text-xs min-w-175 border-collapse">
+          <thead className="bg-slate-50 dark:bg-slate-950/50 border-b border-slate-200 dark:border-slate-800/80 text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wider">
             <tr>
-              <th className="px-5 py-3.5">Invoice #</th>
-              <th className="px-5 py-3.5">Client Company</th>
-              <th className="px-5 py-3.5">Amount</th>
-              <th className="px-5 py-3.5">Status</th>
-              <th className="px-5 py-3.5">Due Date</th>
-              {hasActions && <th className="px-5 py-3.5 text-right">Actions</th>}
+              <th className="px-5 py-3.5 whitespace-nowrap">Invoice #</th>
+              <th className="px-5 py-3.5 whitespace-nowrap">Client Company</th>
+              <th className="px-5 py-3.5 whitespace-nowrap">Amount</th>
+              <th className="px-5 py-3.5 text-center whitespace-nowrap">Status</th>
+              <th className="px-5 py-3.5 whitespace-nowrap">Due Date</th>
+              {hasActions && (
+                <th className="px-5 py-3.5 pr-6 text-right whitespace-nowrap">Actions</th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-slate-700 dark:text-slate-300">
@@ -71,22 +74,24 @@ export default function InvoiceTable({
                   key={inv.id}
                   className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition"
                 >
-                  <td className="px-5 py-3.5 font-medium text-slate-900 dark:text-white flex items-center space-x-2">
-                    <FileText className="h-4 w-4 text-indigo-500 shrink-0" />
-                    <span>{inv.invoice_number}</span>
+                  <td className="px-5 py-3.5 font-medium text-slate-900 dark:text-white whitespace-nowrap">
+                    <div className="flex items-center space-x-2">
+                      <FileText className="h-4 w-4 text-indigo-500 shrink-0" />
+                      <span>{inv.invoice_number}</span>
+                    </div>
                   </td>
-                  <td className="px-5 py-3.5 font-medium">
-                    <div>{inv.company_name}</div>
+                  <td className="px-5 py-3.5 font-medium whitespace-nowrap">
+                    <div className="text-slate-900 dark:text-white">{inv.company_name}</div>
                     {inv.project_title && (
                       <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
                         Project: {inv.project_title}
                       </div>
                     )}
                   </td>
-                  <td className="px-5 py-3.5 font-semibold text-slate-900 dark:text-white">
+                  <td className="px-5 py-3.5 font-semibold text-slate-900 dark:text-white whitespace-nowrap">
                     ${inv.amount.toLocaleString()}
                   </td>
-                  <td className="px-5 py-3.5">
+                  <td className="px-5 py-3.5 text-center align-middle whitespace-nowrap">
                     <span
                       className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
                         inv.status === "Paid"
@@ -99,19 +104,20 @@ export default function InvoiceTable({
                       {inv.status}
                     </span>
                   </td>
-                  <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">
+                  <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400 whitespace-nowrap">
                     {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "N/A"}
                   </td>
 
                   {hasActions && (
-                    <td className="px-5 py-3.5 text-right space-x-1">
+                    <td className="px-5 py-3.5 pr-6 text-right whitespace-nowrap space-x-1">
                       {inv.status !== "Paid" && (
                         <PermissionGuard module="invoices" action="update">
                           <button
+                            type="button"
                             title="Mark as Paid"
                             suppressHydrationWarning
                             onClick={() => handleStatusChange(inv.id, "Paid")}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer inline-flex items-center justify-center"
                           >
                             <CheckCircle2 className="h-4 w-4" />
                           </button>
@@ -120,10 +126,11 @@ export default function InvoiceTable({
 
                       <PermissionGuard module="invoices" action="update">
                         <button
+                          type="button"
                           title="Edit Invoice"
                           suppressHydrationWarning
                           onClick={() => onEdit(inv)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer inline-flex items-center justify-center"
                         >
                           <Edit2 className="h-4 w-4" />
                         </button>
@@ -131,10 +138,11 @@ export default function InvoiceTable({
 
                       <PermissionGuard module="invoices" action="delete">
                         <button
+                          type="button"
                           title="Delete Invoice"
                           suppressHydrationWarning
                           onClick={() => handleDelete(inv.id)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer inline-flex items-center justify-center"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>

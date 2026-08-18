@@ -2,6 +2,8 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import Image from "next/image";
 import {
   Loader2,
   AlertCircle,
@@ -10,7 +12,6 @@ import {
   Mail,
   Lock,
   ArrowRight,
-  Zap,
   FolderKanban,
   Users,
   Receipt,
@@ -108,8 +109,15 @@ export default function AuthPage() {
       
       {/* TOP LEFT BRAND LOGO */}
       <div className="absolute top-6 left-8 z-30 flex items-center">
-        <div className="h-9 w-9 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-600/30">
-          <Zap className="h-5 w-5 text-white" />
+        <div className="h-9 w-9 rounded-xl overflow-hidden flex items-center justify-center shrink-0">
+          <Image
+            src="/clientoralogonobg.png"
+            alt="ClientOra Logo"
+            width={36}
+            height={36}
+            className="h-full w-full object-contain"
+            priority
+          />
         </div>
       </div>
 
@@ -143,7 +151,7 @@ export default function AuthPage() {
                   setErrorMsg("");
                   setSuccessMsg("");
                 }}
-                className={`py-2 text-xs font-semibold rounded-lg transition ${
+                className={`py-2 text-xs font-semibold rounded-lg transition cursor-pointer ${
                   mode === "login"
                     ? "bg-indigo-600 text-white shadow-sm"
                     : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
@@ -158,7 +166,7 @@ export default function AuthPage() {
                   setErrorMsg("");
                   setSuccessMsg("");
                 }}
-                className={`py-2 text-xs font-semibold rounded-lg transition ${
+                className={`py-2 text-xs font-semibold rounded-lg transition cursor-pointer ${
                   mode === "signup"
                     ? "bg-indigo-600 text-white shadow-sm"
                     : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
@@ -212,7 +220,7 @@ export default function AuthPage() {
                     <input
                       type="text"
                       required
-                      placeholder="e.g. Alex Morgan"
+                      placeholder="Fill in your full name"
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
                       className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 transition"
@@ -239,9 +247,19 @@ export default function AuthPage() {
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                  Password <span className="text-rose-500">*</span>
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                    Password <span className="text-rose-500">*</span>
+                  </label>
+                  {mode === "login" && (
+                    <Link
+                      href="/auth/forgot-password"
+                      className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                    >
+                      Forgot password?
+                    </Link>
+                  )}
+                </div>
                 <div className="relative mt-1">
                   <Lock className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-3 pointer-events-none" />
                   <input

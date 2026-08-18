@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
-import { X, Loader2, Zap, Upload, FileText, AlertCircle } from "lucide-react";
+import React, { useState, useRef, useEffect } from "react";
+import { X, Loader2, Zap, Upload, FileText, AlertCircle, ChevronDown, Check } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { Template } from "./types";
 import { useUserRole } from "@/hooks/useUserRole";
@@ -39,6 +39,20 @@ export default function TemplateModal({
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // Custom Category Dropdown State
+  const [isCategoryOpen, setIsCategoryOpen] = useState<boolean>(false);
+  const categoryRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (categoryRef.current && !categoryRef.current.contains(event.target as Node)) {
+        setIsCategoryOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   if (!isOpen) return null;
 
@@ -166,22 +180,52 @@ export default function TemplateModal({
             />
           </div>
 
-          <div>
+          {/* Custom Themed Category Dropdown */}
+          <div className="relative" ref={categoryRef}>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
               Category
             </label>
-            <select
+            <button
+              type="button"
               disabled={!hasAccess}
-              value={category}
-              onChange={(e) => setCategory(e.target.value as Template["category"])}
-              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              onClick={() => setIsCategoryOpen((prev) => !prev)}
+              className="w-full bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-slate-200 flex items-center justify-between hover:border-indigo-500 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
+              <span>{category}</span>
+              <ChevronDown
+                className={`h-4 w-4 text-slate-400 shrink-0 ml-1.5 transition-transform duration-150 ${
+                  isCategoryOpen ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+
+            {isCategoryOpen && (
+              <div className="absolute left-0 top-full mt-1.5 z-50 w-full p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl animate-in fade-in zoom-in-95">
+                {categories.map((cat) => {
+                  const isSelected = cat === category;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => {
+                        setCategory(cat);
+                        setIsCategoryOpen(false);
+                      }}
+                      className={`w-full px-3 py-2 text-left text-xs rounded-xl flex items-center justify-between transition cursor-pointer ${
+                        isSelected
+                          ? "bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-semibold"
+                          : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                      }`}
+                    >
+                      <span>{cat}</span>
+                      {isSelected && (
+                        <Check className="h-3.5 w-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div>

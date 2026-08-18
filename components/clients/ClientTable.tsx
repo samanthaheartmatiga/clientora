@@ -56,7 +56,6 @@ export default function ClientTable({
   }, [activeMenuId]);
 
   const handleDelete = (id: string) => {
-    // Permission check fallback
     if (!canPerformAction(role, "clients", "delete")) {
       return;
     }
@@ -72,21 +71,21 @@ export default function ClientTable({
     switch (clientStatus) {
       case "Active":
         return (
-          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 whitespace-nowrap">
             <CheckCircle2 className="h-3 w-3" />
             <span>Active</span>
           </span>
         );
       case "Lead":
         return (
-          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 whitespace-nowrap">
             <Clock className="h-3 w-3" />
             <span>Lead</span>
           </span>
         );
       case "Archived":
         return (
-          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20">
+          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 whitespace-nowrap">
             <Archive className="h-3 w-3" />
             <span>Archived</span>
           </span>
@@ -95,19 +94,26 @@ export default function ClientTable({
   };
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl shadow-xl transition-colors duration-200">
-      <div className="overflow-x-auto">
-        <table className="w-full table-fixed min-w-175 text-left text-xs">
+    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl shadow-xl transition-colors duration-200 overflow-hidden">
+      <div className="overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] scrollbar-none">
+        <table className="w-full table-fixed min-w-190 text-xs border-collapse">
+          {/* Table Headers */}
           <thead className="bg-slate-50 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800/80 text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wider">
             <tr>
-              <th className="px-5 py-3.5 w-[26%]">Company</th>
-              <th className="px-5 py-3.5 w-[28%]">Contact Email</th>
-              <th className="px-5 py-3.5 w-[14%]">Status</th>
-              <th className="px-5 py-3.5 w-[12%]">Projects</th>
-              <th className="px-5 py-3.5 w-[12%]">Created Date</th>
-              {hasActions && <th className="px-5 py-3.5 w-[8%] text-right">Actions</th>}
+              <th className="px-5 py-3.5 w-[23%] text-center align-middle">Company</th>
+              <th className="px-5 py-3.5 w-[25%] text-center align-middle">Contact Email</th>
+              <th className="px-4 py-3.5 w-[14%] text-center align-middle">Status</th>
+              <th className="px-4 py-3.5 w-[12%] text-center align-middle">Projects</th>
+              <th className="px-4 py-3.5 w-[14%] text-center align-middle">Created Date</th>
+              {hasActions && (
+                <th className="px-4 py-3.5 pr-8 w-[12%] text-center align-middle whitespace-nowrap">
+                  Actions
+                </th>
+              )}
             </tr>
           </thead>
+
+          {/* Table Body */}
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-slate-700 dark:text-slate-200">
             {loading ? (
               <tr>
@@ -122,7 +128,8 @@ export default function ClientTable({
                   key={client.id}
                   className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors"
                 >
-                  <td className="px-5 py-4 font-medium text-slate-900 dark:text-white truncate">
+                  {/* 1. Left-aligned Company */}
+                  <td className="px-5 py-4 font-medium text-slate-900 dark:text-white truncate text-left align-middle">
                     <div className="flex items-center space-x-3">
                       <div className="h-8 w-8 rounded-xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
                         <Building2 className="h-4 w-4" />
@@ -131,57 +138,74 @@ export default function ClientTable({
                     </div>
                   </td>
 
-                  <td className="px-5 py-4 text-slate-500 dark:text-slate-400 truncate">
+                  {/* 2. Left-aligned Contact Email */}
+                  <td className="px-5 py-4 text-slate-500 dark:text-slate-400 truncate text-left align-middle">
                     <div className="flex items-center space-x-2 truncate">
                       <Mail className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                       <span className="truncate">{client.contact_email}</span>
                     </div>
                   </td>
 
-                  <td className="px-5 py-4">{getStatusBadge(client.status)}</td>
-
-                  <td className="px-5 py-4">
-                    <Link
-                      href={`/projects?search=${encodeURIComponent(client.company_name)}`}
-                      className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30 transition cursor-pointer"
-                      title={`View projects for ${client.company_name}`}
-                    >
-                      <FolderKanban className="h-3.5 w-3.5 shrink-0" />
-                      <span>{client.project_count ?? 0}</span>
-                    </Link>
+                  {/* 3. Centered Status */}
+                  <td className="px-4 py-4 text-center align-middle">
+                    <div className="flex items-center justify-center">
+                      {getStatusBadge(client.status)}
+                    </div>
                   </td>
 
-                  <td className="px-5 py-4 text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                    {typeof client.created_at === "string"
-                      ? client.created_at.split("T")[0]
-                      : client.created_at}
-                  </td>
-
-                  {hasActions && (
-                    <td className="px-5 py-4 text-right relative">
-                      <button
-                        onClick={() =>
-                          setActiveMenuId(
-                            activeMenuId === client.id ? null : client.id
-                          )
-                        }
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  {/* 4. Centered Projects */}
+                  <td className="px-4 py-4 text-center align-middle">
+                    <div className="flex items-center justify-center">
+                      <Link
+                        href={`/projects?search=${encodeURIComponent(client.company_name)}`}
+                        className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30 transition cursor-pointer"
+                        title={`View projects for ${client.company_name}`}
                       >
-                        <MoreVertical className="h-4 w-4" />
-                      </button>
+                        <FolderKanban className="h-3.5 w-3.5 shrink-0" />
+                        <span>{client.project_count ?? 0}</span>
+                      </Link>
+                    </div>
+                  </td>
+
+                  {/* 5. Centered Created Date */}
+                  <td className="px-4 py-4 text-slate-500 dark:text-slate-400 whitespace-nowrap text-center align-middle">
+                    <span className="inline-block text-center font-medium">
+                      {typeof client.created_at === "string"
+                        ? client.created_at.split("T")[0]
+                        : client.created_at}
+                    </span>
+                  </td>
+
+                  {/* 6. Centered Actions with safe padding */}
+                  {hasActions && (
+                    <td className="px-4 py-4 pr-8 text-center align-middle relative">
+                      <div className="flex items-center justify-center">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setActiveMenuId(
+                              activeMenuId === client.id ? null : client.id
+                            )
+                          }
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition inline-flex items-center justify-center cursor-pointer"
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </button>
+                      </div>
 
                       {activeMenuId === client.id && (
                         <div
                           ref={menuRef}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 z-50 w-28 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xl p-0.5 text-left space-y-0.5"
+                          className="absolute right-6 top-1/2 -translate-y-1/2 z-50 w-28 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xl p-0.5 text-left space-y-0.5"
                         >
                           <PermissionGuard module="clients" action="update">
                             <button
+                              type="button"
                               onClick={() => {
                                 onEdit(client);
                                 setActiveMenuId(null);
                               }}
-                              className="w-full flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                              className="w-full flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
                             >
                               <Edit2 className="h-3 w-3 text-indigo-600 dark:text-indigo-400 shrink-0" />
                               <span>Edit</span>
@@ -190,8 +214,9 @@ export default function ClientTable({
 
                           <PermissionGuard module="clients" action="delete">
                             <button
+                              type="button"
                               onClick={() => handleDelete(client.id)}
-                              className="w-full flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition"
+                              className="w-full flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
                             >
                               <Trash2 className="h-3 w-3 shrink-0" />
                               <span>Delete</span>

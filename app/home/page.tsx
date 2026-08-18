@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/app/supabase/client";
+import { useWorkspace } from "@/context/WorkspaceContext";
 import { useUserRole } from "@/hooks/useUserRole";
 import { canPerformAction, ROLES } from "@/lib/permissions";
 
@@ -75,6 +76,8 @@ function getCompanyName(clients: RawClientRelation | RawClientRelation[] | null)
 
 export default function HomePage() {
   const supabase = useMemo(() => createClient(), []);
+  const { currentOrg, isLoading: orgLoading } = useWorkspace();
+  const currentOrgId = currentOrg?.id;
   const { role, loading: roleLoading } = useUserRole();
 
   const [userName, setUserName] = useState<string>("Workspace User");
@@ -97,6 +100,11 @@ export default function HomePage() {
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchDashboardData = useCallback(async () => {
+    if (!currentOrgId) {
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const {
         data: { user },
@@ -116,19 +124,31 @@ export default function HomePage() {
         }
       }
 
+      // Fetch all dashboard data scoped to current organization
       const [clientsRes, projectsRes, invoicesRes, meetingsRes, auditLogsRes] =
         await Promise.all([
-          supabase.from("clients").select("id", { count: "exact" }),
-          supabase.from("projects").select("*, clients(company_name)"),
-          supabase.from("invoices").select("*, clients(company_name)"),
+          supabase
+            .from("clients")
+            .select("id", { count: "exact" })
+            .eq("organization_id", currentOrgId),
+          supabase
+            .from("projects")
+            .select("*, clients(company_name)")
+            .eq("organization_id", currentOrgId),
+          supabase
+            .from("invoices")
+            .select("*, clients(company_name)")
+            .eq("organization_id", currentOrgId),
           supabase
             .from("meetings")
             .select("*, clients(company_name)")
+            .eq("organization_id", currentOrgId)
             .order("meeting_date", { ascending: true })
             .order("start_time", { ascending: true }),
           supabase
             .from("audit_logs")
             .select("action, created_at")
+            .eq("organization_id", currentOrgId)
             .order("created_at", { ascending: false })
             .limit(100),
         ]);
@@ -250,7 +270,7 @@ export default function HomePage() {
         }))
       );
 
-      // Robust DateTime Sorting for Upcoming Meetings
+      // DateTime Sorting for Upcoming Meetings
       const scheduledOnly = rawMeetings.filter((m) => m.status === "Scheduled");
 
       const sortedMeetings = [...scheduledOnly].sort((a, b) => {
@@ -276,51 +296,80 @@ export default function HomePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [supabase]);
+  }, [supabase, currentOrgId]);
 
   useEffect(() => {
     let ignore = false;
 
     async function init() {
-      await fetchDashboardData();
+      if (!ignore) {
+        await fetchDashboardData();
+      }
     }
-    init();
+    void init();
+
+    if (!currentOrgId) return;
 
     const dashboardChannel = supabase
-      .channel("dashboard-realtime-activity-sync")
+      .channel(`dashboard-realtime-${currentOrgId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "audit_logs" },
+        {
+          event: "*",
+          schema: "public",
+          table: "audit_logs",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          if (!ignore) fetchDashboardData();
+          if (!ignore) void fetchDashboardData();
         }
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "projects" },
+        {
+          event: "*",
+          schema: "public",
+          table: "projects",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          if (!ignore) fetchDashboardData();
+          if (!ignore) void fetchDashboardData();
         }
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "invoices" },
+        {
+          event: "*",
+          schema: "public",
+          table: "invoices",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          if (!ignore) fetchDashboardData();
+          if (!ignore) void fetchDashboardData();
         }
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "clients" },
+        {
+          event: "*",
+          schema: "public",
+          table: "clients",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          if (!ignore) fetchDashboardData();
+          if (!ignore) void fetchDashboardData();
         }
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "meetings" },
+        {
+          event: "*",
+          schema: "public",
+          table: "meetings",
+          filter: `organization_id=eq.${currentOrgId}`,
+        },
         () => {
-          if (!ignore) fetchDashboardData();
+          if (!ignore) void fetchDashboardData();
         }
       )
       .subscribe();
@@ -329,12 +378,12 @@ export default function HomePage() {
       ignore = true;
       supabase.removeChannel(dashboardChannel);
     };
-  }, [fetchDashboardData, supabase]);
+  }, [fetchDashboardData, supabase, currentOrgId]);
 
   const roleConfig = ROLES[role] || ROLES.viewer;
   const canReadFinancials = canPerformAction(role, "invoices", "read");
 
-  if (isLoading || roleLoading) {
+  if (isLoading || roleLoading || orgLoading) {
     return (
       <div className="min-h-[70vh] flex flex-col items-center justify-center space-y-3 text-slate-400">
         <Loader2 className="h-8 w-8 animate-spin text-indigo-600 dark:text-indigo-400" />

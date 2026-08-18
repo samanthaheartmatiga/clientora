@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Plus } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { createClient } from "@/app/supabase/client";
+import { useWorkspace } from "@/context/WorkspaceContext";
 import { logWorkspaceActivity } from "@/lib/audit";
 import { Client } from "@/components/clients/types";
 import ClientStats from "@/components/clients/ClientStats";
@@ -12,6 +13,7 @@ import ClientModal from "@/components/clients/ClientModal";
 
 interface DbClientRecord {
   id: string;
+  organization_id?: string | null;
   company_name: string;
   contact_email: string;
   status: Client["status"];
@@ -23,9 +25,14 @@ interface ClientMutationPayload {
   company_name: string;
   contact_email: string;
   status: "Active" | "Lead" | "Archived";
+  organization_id?: string | null;
 }
 
 export default function ClientsPage() {
+  const supabase = useMemo(() => createClient(), []);
+  const { currentOrg } = useWorkspace();
+  const currentOrgId = currentOrg?.id;
+
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>("");
@@ -34,53 +41,67 @@ export default function ClientsPage() {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
 
+  const loadClientsData = useCallback(async () => {
+    if (!currentOrgId) {
+      setClients([]);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("clients")
+        .select("*, projects(count)")
+        .eq("organization_id", currentOrgId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Supabase Error fetching clients:", error.message);
+      } else if (data) {
+        const formattedClients: Client[] = (
+          data as unknown as DbClientRecord[]
+        ).map((client) => ({
+          id: client.id,
+          company_name: client.company_name,
+          contact_email: client.contact_email,
+          status: client.status,
+          created_at: client.created_at,
+          project_count: client.projects?.[0]?.count ?? 0,
+        }));
+        setClients(formattedClients);
+      }
+    } catch (err) {
+      console.error("Connection Error:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [supabase, currentOrgId]);
+
   useEffect(() => {
     let isMounted = true;
 
-    async function loadClientsData() {
-      try {
-        const { data, error } = await supabase
-          .from("clients")
-          .select("*, projects(count)")
-          .order("created_at", { ascending: false });
-
-        if (error) {
-          console.error("Supabase Error:", error);
-        } else if (isMounted && data) {
-          const formattedClients: Client[] = (
-            data as unknown as DbClientRecord[]
-          ).map((client) => ({
-            id: client.id,
-            company_name: client.company_name,
-            contact_email: client.contact_email,
-            status: client.status,
-            created_at: client.created_at,
-            project_count: client.projects?.[0]?.count ?? 0,
-          }));
-          setClients(formattedClients);
-        }
-      } catch (err) {
-        console.error("Connection Error:", err);
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+    async function init() {
+      if (isMounted) {
+        await loadClientsData();
       }
     }
+    void init();
 
-    loadClientsData();
+    if (!currentOrgId) return;
 
     const channel = supabase
-      .channel("clients-realtime-channel")
+      .channel(`clients-realtime-${currentOrgId}`)
       .on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
           table: "clients",
+          filter: `organization_id=eq.${currentOrgId}`,
         },
         () => {
-          loadClientsData();
+          if (isMounted) void loadClientsData();
         }
       )
       .on(
@@ -89,9 +110,10 @@ export default function ClientsPage() {
           event: "*",
           schema: "public",
           table: "projects",
+          filter: `organization_id=eq.${currentOrgId}`,
         },
         () => {
-          loadClientsData();
+          if (isMounted) void loadClientsData();
         }
       )
       .subscribe();
@@ -100,7 +122,7 @@ export default function ClientsPage() {
       isMounted = false;
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [loadClientsData, supabase, currentOrgId]);
 
   const filteredClients = clients.filter((client) => {
     const matchesSearch =
@@ -122,19 +144,26 @@ export default function ClientsPage() {
     setIsModalOpen(true);
   };
 
-  const handleFormSubmit = async (formData: ClientMutationPayload) => {
-    try {
-      const payload: ClientMutationPayload = {
-        company_name: formData.company_name,
-        contact_email: formData.contact_email,
-        status: formData.status,
-      };
+  const handleFormSubmit = async (formData: {
+    company_name: string;
+    contact_email: string;
+    status: "Active" | "Lead" | "Archived";
+  }) => {
+    if (!currentOrgId) return;
 
+    try {
       if (editingClient) {
+        const updatePayload: Partial<ClientMutationPayload> = {
+          company_name: formData.company_name,
+          contact_email: formData.contact_email,
+          status: formData.status,
+        };
+
         const { error } = await supabase
           .from("clients")
-          .update(payload)
-          .eq("id", editingClient.id);
+          .update(updatePayload)
+          .eq("id", editingClient.id)
+          .eq("organization_id", currentOrgId);
 
         if (error) {
           console.error("Failed to update client:", error.message);
@@ -148,17 +177,26 @@ export default function ClientsPage() {
           actionDesc = `Updated Client: ${editingClient.company_name} → ${formData.company_name}`;
         }
 
-        await logWorkspaceActivity(actionDesc);
+        await logWorkspaceActivity(actionDesc, currentOrgId);
       } else {
-        const { error } = await supabase.from("clients").insert([payload]);
+        const insertPayload: ClientMutationPayload = {
+          company_name: formData.company_name,
+          contact_email: formData.contact_email,
+          status: formData.status,
+          organization_id: currentOrgId,
+        };
+
+        const { error } = await supabase.from("clients").insert([insertPayload]);
 
         if (error) {
           console.error("Failed to insert client:", error.message);
           return;
         }
 
-        await logWorkspaceActivity(`Created Client: ${formData.company_name}`);
+        await logWorkspaceActivity(`Created Client: ${formData.company_name}`, currentOrgId);
       }
+
+      await loadClientsData();
     } catch (err) {
       console.error("Submit client error:", err);
     } finally {
@@ -168,13 +206,20 @@ export default function ClientsPage() {
   };
 
   const handleDeleteClient = async (id: string) => {
+    if (!currentOrgId) return;
     const targetClient = clients.find((c) => c.id === id);
 
-    const { error } = await supabase.from("clients").delete().eq("id", id);
+    const { error } = await supabase
+      .from("clients")
+      .delete()
+      .eq("id", id)
+      .eq("organization_id", currentOrgId);
+
     if (!error) {
       setClients((prev) => prev.filter((c) => c.id !== id));
       await logWorkspaceActivity(
-        `Deleted Client: ${targetClient?.company_name || "Client Record"}`
+        `Deleted Client: ${targetClient?.company_name || "Client Record"}`,
+        currentOrgId
       );
     } else {
       console.error("Failed to delete client:", error.message);

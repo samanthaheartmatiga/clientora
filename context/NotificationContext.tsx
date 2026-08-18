@@ -7,11 +7,14 @@ import React, {
   useState,
   useCallback,
   useRef,
+  useMemo,
 } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { createClient } from "@/app/supabase/client";
+import { useWorkspace } from "@/context/WorkspaceContext";
 
 export interface NotificationItem {
   id: string;
+  organization_id?: string | null;
   title: string;
   message: string;
   type: string;
@@ -39,7 +42,6 @@ interface NotificationContextType {
   }) => Promise<void>;
 }
 
-// 12-Hour AM/PM Time Format Helper
 function formatTo12Hour(timeStr: string): string {
   if (!timeStr) return "";
   const parts = timeStr.split(":");
@@ -53,6 +55,13 @@ function formatTo12Hour(timeStr: string): string {
   return `${hours}:${minutes} ${ampm}`;
 }
 
+function getLocalDateString(d: Date = new Date()): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 const NotificationContext = createContext<
   NotificationContextType | undefined
 >(undefined);
@@ -62,35 +71,59 @@ export function NotificationProvider({
 }: {
   children: React.ReactNode;
 }) {
+  const supabase = useMemo(() => createClient(), []);
+  const { currentOrg } = useWorkspace();
+  const currentOrgId = currentOrg?.id;
+
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [activeTab, setActiveTab] = useState<NotificationTab>("all");
   const isCheckingRef = useRef(false);
 
-  // Fetch notifications and filter out duplicate titles/messages in UI
+  // 1. Fetch notifications safely (with fallback if column is missing)
   const fetchNotifications = useCallback(async () => {
-    const { data } = await supabase
-      .from("notifications")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(30);
+    if (!currentOrgId) {
+      setNotifications([]);
+      return;
+    }
 
-    if (data) {
-      const uniqueList: NotificationItem[] = [];
-      const seenKeys = new Set<string>();
+    try {
+      // Try tenant query first
+      let res = await supabase
+        .from("notifications")
+        .select("*")
+        .eq("organization_id", currentOrgId)
+        .order("created_at", { ascending: false })
+        .limit(30);
 
-      for (const item of data as NotificationItem[]) {
-        const key = `${item.title}-${item.link || item.message}`;
-        if (!seenKeys.has(key)) {
-          seenKeys.add(key);
-          uniqueList.push(item);
-        }
+      // Fallback if organization_id column does not exist yet
+      if (res.error && res.error.message.includes("organization_id")) {
+        res = await supabase
+          .from("notifications")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(30);
       }
 
-      setNotifications(uniqueList);
-    }
-  }, []);
+      if (res.data) {
+        const uniqueList: NotificationItem[] = [];
+        const seenKeys = new Set<string>();
 
-  // Centralized insert helper with strict database-level duplicate checking
+        for (const item of res.data as NotificationItem[]) {
+          const key = `${item.title}-${item.link || item.message}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            uniqueList.push(item);
+          }
+        }
+
+        setNotifications(uniqueList);
+      }
+    } catch (err) {
+      console.error("Failed to fetch notifications:", err);
+    }
+  }, [supabase, currentOrgId]);
+
+  // 2. Insert helper with schema fallback
   const addNotification = useCallback(
     async (notif: {
       title: string;
@@ -98,101 +131,102 @@ export function NotificationProvider({
       type?: string;
       link?: string;
     }) => {
+      if (!currentOrgId) return;
+
       try {
-        let query = supabase.from("notifications").select("id").limit(1);
+        const payload: Record<string, unknown> = {
+          title: notif.title,
+          message: notif.message,
+          type: notif.type || "system",
+          link: notif.link || null,
+        };
 
-        if (notif.link) {
-          query = query.eq("link", notif.link);
-        } else {
-          query = query.eq("title", notif.title).eq("message", notif.message);
-        }
+        // Try insert with organization_id
+        const { error: insertErr } = await supabase.from("notifications").insert([
+          {
+            ...payload,
+            organization_id: currentOrgId,
+          },
+        ]);
 
-        const { data: existing } = await query;
-
-        if (!existing || existing.length === 0) {
-          await supabase.from("notifications").insert([
-            {
-              title: notif.title,
-              message: notif.message,
-              type: notif.type || "system",
-              link: notif.link || null,
-            },
-          ]);
+        // Fallback insert without organization_id if column missing
+        if (insertErr && insertErr.message.includes("organization_id")) {
+          await supabase.from("notifications").insert([payload]);
         }
       } catch (err) {
         console.error("Error inserting notification:", err);
       }
     },
-    []
+    [supabase, currentOrgId]
   );
 
-  // 1. Check upcoming meetings — STRICT 1-HOUR BEFORE NOTIFICATION WITH 12-HR TIME
+  // 3. Upcoming meetings
   const checkUpcomingMeetingReminders = useCallback(async () => {
+    if (!currentOrgId) return;
+
     try {
       const now = new Date();
-      const todayStr = now.toISOString().split("T")[0];
+      const todayStr = getLocalDateString(now);
 
       const { data: upcomingMeetings } = await supabase
         .from("meetings")
         .select("id, title, meeting_date, start_time, meeting_link, status")
+        .eq("organization_id", currentOrgId)
         .eq("meeting_date", todayStr)
         .eq("status", "Scheduled");
 
       if (!upcomingMeetings) return;
 
       for (const m of upcomingMeetings) {
+        if (!m.start_time) continue;
         const [hours, minutes] = m.start_time.split(":").map(Number);
         const meetingDateTime = new Date(
           now.getFullYear(),
           now.getMonth(),
           now.getDate(),
           hours,
-          minutes
+          minutes,
+          0
         );
 
         const diffMs = meetingDateTime.getTime() - now.getTime();
         const diffMinutes = Math.floor(diffMs / (1000 * 60));
 
-        // Trigger ONLY when meeting is between 0 and 60 minutes away
         if (diffMinutes > 0 && diffMinutes <= 60) {
           const formattedTime = formatTo12Hour(m.start_time);
-          const reminderTitle = "Upcoming Meeting Reminder";
-          const reminderMessage = `"${m.title}" starts in less than 1 hour (${formattedTime}).`;
-          const targetLink = `/meetings?id=${m.id}`;
-
           await addNotification({
-            title: reminderTitle,
-            message: reminderMessage,
+            title: "Upcoming Meeting Reminder",
+            message: `"${m.title}" starts in less than 1 hour (${formattedTime}).`,
             type: "meeting_reminder",
-            link: targetLink,
+            link: `/meetings?id=${m.id}`,
           });
         }
       }
     } catch (err) {
       console.error("Error checking meeting reminders:", err);
     }
-  }, [addNotification]);
+  }, [supabase, currentOrgId, addNotification]);
 
-  // 2. Check overdue invoices
+  // 4. Overdue invoices
   const checkOverdueInvoices = useCallback(async () => {
+    if (!currentOrgId) return;
+
     try {
-      const todayStr = new Date().toISOString().split("T")[0];
+      const todayStr = getLocalDateString(new Date());
 
       const { data: pendingInvoices } = await supabase
         .from("invoices")
         .select("id, invoice_number, due_date, status")
+        .eq("organization_id", currentOrgId)
         .lt("due_date", todayStr)
         .neq("status", "Paid");
 
       if (!pendingInvoices) return;
 
       for (const inv of pendingInvoices) {
-        const title = "Overdue Invoice Warning";
-        const message = `Invoice #${inv.invoice_number} passed due on ${inv.due_date}. Please set status to Overdue manually.`;
-
         await addNotification({
-          title,
-          message,
+          title: "Overdue Invoice Warning",
+          message: `Invoice #${inv.invoice_number} passed due on ${inv.due_date}. Please set status to Overdue manually.`,
           type: "invoice",
           link: `/invoices?id=${inv.id}`,
         });
@@ -200,14 +234,17 @@ export function NotificationProvider({
     } catch (err) {
       console.error("Error checking overdue invoices:", err);
     }
-  }, [addNotification]);
+  }, [supabase, currentOrgId, addNotification]);
 
-  // 3. Check project deadlines (Strict 3-Day & 1-Day warnings)
+  // 5. Project deadlines
   const checkProjectDeadlines = useCallback(async () => {
+    if (!currentOrgId) return;
+
     try {
       const { data: activeProjects } = await supabase
         .from("projects")
         .select("id, title, due_date, status")
+        .eq("organization_id", currentOrgId)
         .neq("status", "Completed");
 
       if (!activeProjects) return;
@@ -249,10 +286,10 @@ export function NotificationProvider({
     } catch (err) {
       console.error("Error checking project deadlines:", err);
     }
-  }, [addNotification]);
+  }, [supabase, currentOrgId, addNotification]);
 
   const runAllChecksSequentially = useCallback(async () => {
-    if (isCheckingRef.current) return;
+    if (!currentOrgId || isCheckingRef.current) return;
     isCheckingRef.current = true;
 
     try {
@@ -265,6 +302,7 @@ export function NotificationProvider({
       isCheckingRef.current = false;
     }
   }, [
+    currentOrgId,
     fetchNotifications,
     checkUpcomingMeetingReminders,
     checkOverdueInvoices,
@@ -272,49 +310,64 @@ export function NotificationProvider({
   ]);
 
   useEffect(() => {
-    runAllChecksSequentially();
+    let ignore = false;
+
+    const init = async () => {
+      if (!currentOrgId) {
+        if (!ignore) setNotifications([]);
+        return;
+      }
+      await runAllChecksSequentially();
+    };
+
+    void init();
+
+    if (!currentOrgId) return;
 
     const interval = setInterval(() => {
-      runAllChecksSequentially();
+      void runAllChecksSequentially();
     }, 60 * 1000);
 
     const channel = supabase
-      .channel("realtime-app-events")
+      .channel(`realtime-notifications-${currentOrgId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "notifications" },
         () => {
-          fetchNotifications();
+          if (!ignore) void fetchNotifications();
         }
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "meetings" },
+        { event: "*", schema: "public", table: "meetings", filter: `organization_id=eq.${currentOrgId}` },
         () => {
-          checkUpcomingMeetingReminders().then(fetchNotifications);
+          if (!ignore) void checkUpcomingMeetingReminders().then(fetchNotifications);
         }
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "invoices" },
+        { event: "*", schema: "public", table: "invoices", filter: `organization_id=eq.${currentOrgId}` },
         () => {
-          checkOverdueInvoices().then(fetchNotifications);
+          if (!ignore) void checkOverdueInvoices().then(fetchNotifications);
         }
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "projects" },
+        { event: "*", schema: "public", table: "projects", filter: `organization_id=eq.${currentOrgId}` },
         () => {
-          checkProjectDeadlines().then(fetchNotifications);
+          if (!ignore) void checkProjectDeadlines().then(fetchNotifications);
         }
       )
       .subscribe();
 
     return () => {
+      ignore = true;
       clearInterval(interval);
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, [
+    currentOrgId,
+    supabase,
     runAllChecksSequentially,
     fetchNotifications,
     checkUpcomingMeetingReminders,
@@ -331,10 +384,7 @@ export function NotificationProvider({
 
   const markAllAsRead = async () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-    await supabase
-      .from("notifications")
-      .update({ read: true })
-      .eq("read", false);
+    await supabase.from("notifications").update({ read: true }).eq("read", false);
   };
 
   const deleteNotification = async (id: string) => {
