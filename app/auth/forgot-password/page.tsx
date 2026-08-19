@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import {
   KeyRound,
   ArrowLeft,
@@ -10,7 +11,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Mail,
-  Zap,
   FolderKanban,
   Users,
   Receipt,
@@ -37,7 +37,11 @@ export default function ForgotPasswordPage() {
     setErrorMessage(null);
 
     try {
-      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      const origin =
+        typeof window !== "undefined" && window.location.origin
+          ? window.location.origin
+          : process.env.NEXT_PUBLIC_APP_URL || "https://useclientora.vercel.app";
+
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
         redirectTo: `${origin}/auth/reset-password`,
       });
@@ -62,9 +66,16 @@ export default function ForgotPasswordPage() {
       <div className="absolute top-6 left-8 z-30 flex items-center">
         <Link
           href="/auth"
-          className="h-9 w-9 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 transition"
+          className="h-9 w-9 rounded-xl overflow-hidden flex items-center justify-center shrink-0 hover:opacity-80 transition"
         >
-          <Zap className="h-5 w-5 text-white" />
+          <Image
+            src="/clientoralogonobg.png"
+            alt="ClientOra Logo"
+            width={36}
+            height={36}
+            className="h-full w-full object-contain"
+            priority
+          />
         </Link>
       </div>
 
