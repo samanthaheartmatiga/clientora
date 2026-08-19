@@ -332,102 +332,92 @@ function MeetingsContent() {
       }
 
       if (targetEmail) {
-        try {
-          await fetch("/api/send-meeting-email", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              meetingId: savedMeetingId,
-              sequence,
-              to: targetEmail,
-              clientName: targetName || "Client",
-              title: payload.title,
-              meetingType: payload.meeting_type,
-              meetingDate: payload.meeting_date,
-              startTime: payload.start_time,
-              durationMinutes: payload.duration_minutes,
-              meetingLink: payload.meeting_link,
-              location: payload.location,
-              notes: payload.notes,
-            }),
-          });
-        } catch (emailErr) {
-          console.error("Error triggering client email API:", emailErr);
-        }
+        fetch("/api/send-meeting-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            meetingId: savedMeetingId,
+            sequence,
+            to: targetEmail,
+            clientName: targetName || "Client",
+            title: payload.title,
+            meetingType: payload.meeting_type,
+            meetingDate: payload.meeting_date,
+            startTime: payload.start_time,
+            durationMinutes: payload.duration_minutes,
+            meetingLink: payload.meeting_link,
+            location: payload.location,
+            notes: payload.notes,
+          }),
+        }).catch((emailErr) => console.error("Error sending meeting email:", emailErr));
       }
     }
 
     setIsModalOpen(false);
+    setEditingMeeting(null);
     await refetchMeetings();
   };
 
-  const handleDeleteMeeting = async (id: string) => {
+  const handleDeleteMeeting = (id: string) => {
     if (!currentOrgId) return;
     const meetingToDelete = meetings.find((m) => m.id === id);
 
-    if (meetingToDelete) {
-      let targetEmail = clientOptions.find(
-        (c) => c.id === meetingToDelete.client_id
-      )?.email;
-      let targetName = clientOptions.find(
-        (c) => c.id === meetingToDelete.client_id
-      )?.company_name;
+    // 1. Instant optimistic UI removal
+    setMeetings((prev) => prev.filter((m) => m.id !== id));
 
-      if (!targetEmail) {
-        const { data: dbClient } = await supabase
-          .from("clients")
-          .select("company_name, contact_email")
-          .eq("id", meetingToDelete.client_id)
-          .eq("organization_id", currentOrgId)
-          .single();
+    // 2. Perform DB deletion in the background cleanly typed
+    (async () => {
+      try {
+        const { error } = await supabase
+          .from("meetings")
+          .delete()
+          .eq("id", id)
+          .eq("organization_id", currentOrgId);
 
-        if (dbClient) {
-          targetEmail = dbClient.contact_email;
-          targetName = dbClient.company_name;
+        if (error) {
+          console.error("Error deleting meeting:", error.message);
+          void refetchMeetings();
+        } else {
+          void logWorkspaceActivity(
+            `Cancelled Meeting: ${meetingToDelete?.title || "Meeting"}`,
+            currentOrgId
+          );
         }
+      } catch (err) {
+        console.error("Delete meeting exception:", err);
       }
+    })();
+
+    // 3. Dispatch cancellation email non-blockingly
+    if (meetingToDelete) {
+      const client = clientOptions.find((c) => c.id === meetingToDelete.client_id);
+      const targetEmail = client?.email;
+      const targetName = client?.company_name;
 
       if (targetEmail) {
-        try {
-          await fetch("/api/send-meeting-email", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              meetingId: meetingToDelete.id,
-              sequence: ((meetingToDelete as unknown as DbMeetingRecord).sequence || 0) + 1,
-              isCancellation: true,
-              to: targetEmail,
-              clientName: targetName || "Client",
-              title: meetingToDelete.title,
-              meetingType: meetingToDelete.meeting_type,
-              meetingDate: meetingToDelete.meeting_date,
-              startTime: meetingToDelete.start_time,
-              durationMinutes: meetingToDelete.duration_minutes,
-              meetingLink: meetingToDelete.meeting_link,
-              location: meetingToDelete.location,
-              notes: meetingToDelete.notes,
-            }),
-          });
-        } catch (err) {
-          console.error("Error sending meeting cancellation email:", err);
-        }
+        fetch("/api/send-meeting-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            meetingId: meetingToDelete.id,
+            sequence:
+              ((meetingToDelete as unknown as DbMeetingRecord).sequence || 0) + 1,
+            isCancellation: true,
+            to: targetEmail,
+            clientName: targetName || "Client",
+            title: meetingToDelete.title,
+            meetingType: meetingToDelete.meeting_type,
+            meetingDate: meetingToDelete.meeting_date,
+            startTime: meetingToDelete.start_time,
+            durationMinutes: meetingToDelete.duration_minutes,
+            meetingLink: meetingToDelete.meeting_link,
+            location: meetingToDelete.location,
+            notes: meetingToDelete.notes,
+          }),
+        }).catch((err) =>
+          console.error("Cancellation email background error:", err)
+        );
       }
-    }
-
-    const { error } = await supabase
-      .from("meetings")
-      .delete()
-      .eq("id", id)
-      .eq("organization_id", currentOrgId);
-
-    if (!error) {
-      setMeetings((prev) => prev.filter((m) => m.id !== id));
-      await logWorkspaceActivity(
-        `Cancelled Meeting: ${meetingToDelete?.title || "Meeting"}`,
-        currentOrgId
-      );
-    } else {
-      console.error("Error deleting meeting:", error.message);
     }
   };
 
@@ -475,7 +465,10 @@ function MeetingsContent() {
       <MeetingModal
         key={editingMeeting ? editingMeeting.id : isModalOpen ? "open" : "closed"}
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingMeeting(null);
+        }}
         editingMeeting={editingMeeting}
         clientOptions={clientOptions}
         projectOptions={projectOptions}

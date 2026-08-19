@@ -9,7 +9,6 @@ import {
   AlertCircle,
   UserPlus,
   Mail,
-  Clock,
   Trash2,
   Copy,
   X,
@@ -110,7 +109,7 @@ export default function TeamDirectoryTab() {
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [membersList, setMembersList] = useState<WorkspaceMemberItem[]>([]);
-  const [invitations, setInvitations] = useState<PendingInvite[]>([]);
+  const [, setInvitations] = useState<PendingInvite[]>([]);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
 
   // Search & Filter States
@@ -206,7 +205,7 @@ export default function TeamDirectoryTab() {
 
       setMembersList(formattedMembers);
 
-      // Fetch pending email invitations only
+      // Fetch pending email invitations (kept in logic)
       const { data: inviteRows, error: inviteErr } = await supabase
         .from("invitations")
         .select("id, email, role, token, expires_at, created_at")
@@ -503,25 +502,6 @@ export default function TeamDirectoryTab() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleRevokeInvite = async (inviteId: string, label: string) => {
-    if (!currentOrgId) return;
-
-    try {
-      const { error } = await supabase
-        .from("invitations")
-        .delete()
-        .eq("id", inviteId)
-        .eq("organization_id", currentOrgId);
-
-      if (error) throw error;
-
-      setInvitations((prev) => prev.filter((i) => i.id !== inviteId));
-      await logWorkspaceActivity(`Revoked Workspace Invite (${label})`, currentOrgId);
-    } catch (err) {
-      console.error("Failed to revoke invite:", err);
-    }
-  };
-
   if (isInitialLoading) {
     return (
       <div className="py-12 flex flex-col items-center justify-center space-y-2 text-slate-400">
@@ -531,10 +511,8 @@ export default function TeamDirectoryTab() {
     );
   }
 
-  const emailInvitations = invitations.filter((inv) => Boolean(inv.email));
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-full overflow-hidden">
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
         <div>
@@ -549,7 +527,7 @@ export default function TeamDirectoryTab() {
           </p>
         </div>
 
-        <div className="flex items-center space-x-2.5 self-start lg:self-auto">
+        <div className="flex items-center space-x-2 self-start lg:self-auto">
           {isUserAdminOrSuperadmin && (
             <button
               type="button"
@@ -561,9 +539,9 @@ export default function TeamDirectoryTab() {
                 setInviteError(null);
                 setIsInviteModalOpen(true);
               }}
-              className="inline-flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3.5 py-2 rounded-xl shadow-md shadow-indigo-600/20 transition cursor-pointer"
+              className="inline-flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] sm:text-xs font-semibold px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-xl shadow-md shadow-indigo-600/20 transition cursor-pointer"
             >
-              <UserPlus className="h-3.5 w-3.5" />
+              <UserPlus className="h-3 w-3 sm:h-3.5 sm:w-3.5 shrink-0" />
               <span>Invite Member</span>
             </button>
           )}
@@ -572,11 +550,11 @@ export default function TeamDirectoryTab() {
             <button
               type="button"
               onClick={() => setIsDeleteModalOpen(true)}
-              className="inline-flex items-center space-x-1.5 border border-rose-200 dark:border-rose-900 bg-rose-50/50 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 text-xs font-semibold px-3 py-2 rounded-xl transition cursor-pointer"
+              className="inline-flex items-center space-x-1 border border-rose-200 dark:border-rose-900 bg-rose-50/50 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 text-[10px] sm:text-xs font-semibold px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl transition cursor-pointer"
               title="Delete workspace"
             >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Delete Workspace</span>
+              <Trash2 className="h-3 w-3 sm:h-3.5 sm:w-3.5 shrink-0" />
+              <span>Delete Workspace</span>
             </button>
           )}
         </div>
@@ -597,15 +575,15 @@ export default function TeamDirectoryTab() {
       )}
 
       {/* Search & Filter Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-3 rounded-2xl shadow-xs">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-2.5 sm:p-3 rounded-2xl shadow-xs">
         <div className="relative flex-1">
-          <Search className="h-4 w-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search className="h-3.5 w-3.5 sm:h-4 sm:w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             placeholder="Search member by name or email..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3.5 py-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+            className="w-full pl-8 sm:pl-9 pr-3.5 py-1.5 sm:py-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
           />
           {searchQuery && (
             <button
@@ -620,7 +598,7 @@ export default function TeamDirectoryTab() {
         <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
           <button
             onClick={() => setSelectedRoleFilter("all")}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center space-x-1.5 ${
+            className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center space-x-1 ${
               selectedRoleFilter === "all"
                 ? "bg-indigo-600 text-white shadow-xs"
                 : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
@@ -639,7 +617,7 @@ export default function TeamDirectoryTab() {
               <button
                 key={rKey}
                 onClick={() => setSelectedRoleFilter(rKey)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center space-x-1.5 ${
+                className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center space-x-1 ${
                   isSelected
                     ? "bg-indigo-600 text-white shadow-xs"
                     : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
@@ -654,14 +632,14 @@ export default function TeamDirectoryTab() {
       </div>
 
       {/* Active Members Table */}
-      <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200/80 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 shadow-xs">
-        <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 rounded-t-2xl flex items-center justify-between">
-          <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+      <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200/80 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 shadow-xs overflow-hidden">
+        <div className="px-3.5 sm:px-5 py-2.5 sm:py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 rounded-t-2xl flex items-center justify-between">
+          <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
             Active Workspace Members ({filteredMembers.length})
           </span>
           {(searchQuery || selectedRoleFilter !== "all") && (
-            <span className="text-[11px] text-slate-400">
-              Filtered from {membersList.length} total members
+            <span className="text-[10px] sm:text-[11px] text-slate-400 truncate ml-2">
+              Filtered from {membersList.length}
             </span>
           )}
         </div>
@@ -687,15 +665,16 @@ export default function TeamDirectoryTab() {
             return (
               <div
                 key={member.id}
-                className={`p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition ${
+                className={`p-3.5 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 sm:gap-3 transition ${
                   isSelf
                     ? "bg-indigo-50/60 dark:bg-indigo-950/30 border-l-4 border-l-indigo-600 dark:border-l-indigo-500"
                     : "hover:bg-slate-50/50 dark:hover:bg-slate-800/30"
                 } ${index === filteredMembers.length - 1 ? "rounded-b-2xl" : ""}`}
               >
-                <div className="flex items-center space-x-3">
+                {/* Member Info */}
+                <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0 w-full sm:w-auto">
                   <div
-                    className={`h-9 w-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${
+                    className={`h-8 w-8 sm:h-9 sm:w-9 rounded-xl flex items-center justify-center text-[11px] sm:text-xs font-bold shrink-0 ${
                       isSelf
                         ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/30"
                         : "bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800/60 text-indigo-600 dark:text-indigo-400"
@@ -703,25 +682,26 @@ export default function TeamDirectoryTab() {
                   >
                     {initials}
                   </div>
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center space-x-1.5 flex-wrap">
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
                         {member.full_name || "Name not provided"}
                       </span>
                       {isSelf && (
-                        <span className="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-md font-bold shadow-xs">
+                        <span className="text-[9px] sm:text-[10px] bg-indigo-600 text-white px-1.5 py-0.2 rounded font-bold shadow-xs">
                           You
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
-                      <Mail className="h-3 w-3" />
-                      <span>{member.email || "No email address"}</span>
+                    <p className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 flex items-center gap-1 min-w-0">
+                      <Mail className="h-2.5 w-2.5 sm:h-3 sm:w-3 shrink-0" />
+                      <span className="truncate">{member.email || "No email address"}</span>
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-2 shrink-0 self-start sm:self-auto">
+                {/* Role Pill & Actions */}
+                <div className="flex items-center space-x-1.5 shrink-0 self-stretch sm:self-auto justify-between sm:justify-start pt-1 sm:pt-0">
                   <div className="relative">
                     {canEditThisUser ? (
                       <div>
@@ -730,15 +710,15 @@ export default function TeamDirectoryTab() {
                           onClick={() =>
                             setOpenDropdownId(openDropdownId === member.id ? null : member.id)
                           }
-                          className={`flex items-center space-x-2 text-xs font-semibold px-3 py-1.5 rounded-xl border transition cursor-pointer whitespace-nowrap ${roleConf.badgeStyle}`}
+                          className={`flex items-center space-x-1.5 text-[11px] sm:text-xs font-semibold px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl border transition cursor-pointer whitespace-nowrap ${roleConf.badgeStyle}`}
                         >
                           {updatingUserId === member.user_id ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <Loader2 className="h-3 w-3 sm:h-3.5 sm:w-3.5 animate-spin" />
                           ) : (
                             <>
-                              <Shield className="h-3.5 w-3.5 shrink-0" />
+                              <Shield className="h-3 w-3 sm:h-3.5 sm:w-3.5 shrink-0" />
                               <span>{roleConf.label}</span>
-                              <ChevronDown className="h-3.5 w-3.5 opacity-60 ml-1 shrink-0" />
+                              <ChevronDown className="h-3 w-3 sm:h-3.5 sm:w-3.5 opacity-60 ml-0.5 shrink-0" />
                             </>
                           )}
                         </button>
@@ -750,7 +730,7 @@ export default function TeamDirectoryTab() {
                               onClick={() => setOpenDropdownId(null)}
                             />
                             <div
-                              className={`absolute right-0 w-60 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 p-2 space-y-1 ${
+                              className={`absolute right-0 w-52 sm:w-60 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 p-1.5 sm:p-2 space-y-1 ${
                                 popUpward ? "bottom-full mb-2" : "top-full mt-2"
                               }`}
                             >
@@ -767,7 +747,7 @@ export default function TeamDirectoryTab() {
                                     key={rKey}
                                     type="button"
                                     onClick={() => handleRoleChange(member, rKey)}
-                                    className={`w-full text-left p-2 rounded-xl text-xs transition cursor-pointer flex flex-col space-y-0.5 ${
+                                    className={`w-full text-left p-1.5 sm:p-2 rounded-xl text-[11px] sm:text-xs transition cursor-pointer flex flex-col space-y-0.5 ${
                                       isSelected
                                         ? "bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-semibold"
                                         : "hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
@@ -775,9 +755,9 @@ export default function TeamDirectoryTab() {
                                   >
                                     <div className="flex items-center justify-between">
                                       <span>{conf.label}</span>
-                                      {isSelected && <Check className="h-3.5 w-3.5" />}
+                                      {isSelected && <Check className="h-3 w-3 sm:h-3.5 sm:w-3.5" />}
                                     </div>
-                                    <span className="text-[10px] opacity-75 font-normal">
+                                    <span className="text-[9px] sm:text-[10px] opacity-75 font-normal line-clamp-1">
                                       {conf.description}
                                     </span>
                                   </button>
@@ -789,9 +769,9 @@ export default function TeamDirectoryTab() {
                       </div>
                     ) : (
                       <div
-                        className={`flex items-center space-x-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl border whitespace-nowrap ${roleConf.badgeStyle}`}
+                        className={`flex items-center space-x-1.5 text-[11px] sm:text-xs font-semibold px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl border whitespace-nowrap ${roleConf.badgeStyle}`}
                       >
-                        <Shield className="h-3.5 w-3.5 shrink-0" />
+                        <Shield className="h-3 w-3 sm:h-3.5 sm:w-3.5 shrink-0" />
                         <span>{roleConf.label}</span>
                       </div>
                     )}
@@ -805,10 +785,10 @@ export default function TeamDirectoryTab() {
                         setActionSuccess(null);
                         setMemberToRemove(member);
                       }}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer"
+                      className="p-1 sm:p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition cursor-pointer shrink-0"
                       title="Remove member from workspace"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Trash2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                     </button>
                   )}
                 </div>
@@ -822,101 +802,32 @@ export default function TeamDirectoryTab() {
         )}
       </div>
 
-      {/* Pending Email Invitations Section */}
-      {emailInvitations.length > 0 && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs space-y-0">
-          <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-amber-50/30 dark:bg-amber-950/10">
-            <span className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" />
-              Pending Email Invitations ({emailInvitations.length})
-            </span>
-          </div>
-
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {emailInvitations.map((inv) => {
-              const inviteUrl =
-                typeof window !== "undefined"
-                  ? `${window.location.origin}/join?token=${inv.token}`
-                  : `/join?token=${inv.token}`;
-
-              return (
-                <div
-                  key={inv.id}
-                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition"
-                >
-                  <div className="flex items-center space-x-3">
-                    <div className="h-8 w-8 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400 shrink-0">
-                      <Mail className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                        <span>{inv.email}</span>
-                      </h4>
-                      <p className="text-[11px] text-slate-400 mt-0.5">
-                        Invited as <span className="font-semibold capitalize">{inv.role}</span> •
-                        Expires in 7 days
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center space-x-2 shrink-0 self-end sm:self-auto">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(inviteUrl);
-                        setActionSuccess("Invitation link copied to clipboard!");
-                        setTimeout(() => setActionSuccess(null), 2500);
-                      }}
-                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 transition cursor-pointer"
-                    >
-                      <Copy className="h-3 w-3" />
-                      <span>Copy Link</span>
-                    </button>
-
-                    {isUserAdminOrSuperadmin && (
-                      <button
-                        type="button"
-                        onClick={() => handleRevokeInvite(inv.id, inv.email || "Invite")}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 transition cursor-pointer"
-                        title="Revoke invitation"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {/* Remove Member Modal */}
       {memberToRemove && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="h-11 w-11 rounded-2xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900 flex items-center justify-center text-rose-600 dark:text-rose-400">
+          <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="h-11 w-11 rounded-2xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900 flex items-center justify-center text-rose-600 dark:text-rose-400 mx-auto">
               <AlertTriangle className="h-5 w-5" />
             </div>
 
-            <div className="space-y-1 text-left">
+            <div className="space-y-1.5 text-center">
               <h3 className="text-base font-bold text-slate-900 dark:text-white">
                 Remove Member from Workspace?
               </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed px-2">
                 Are you sure you want to remove{" "}
-                <strong className="text-slate-800 dark:text-slate-200">
+                <strong className="text-slate-800 dark:text-slate-200 wrap-break-word">
                   {memberToRemove.full_name || memberToRemove.email || "this user"}
                 </strong>{" "}
                 from <strong>{currentOrg?.name}</strong>? They will immediately lose access to all projects, clients, and workspace documents.
               </p>
             </div>
 
-            <div className="flex items-center justify-end space-x-2.5 pt-2">
+            <div className="grid grid-cols-2 gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => setMemberToRemove(null)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition cursor-pointer"
+                className="w-full py-2.5 text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition cursor-pointer"
               >
                 Cancel
               </button>
@@ -924,7 +835,7 @@ export default function TeamDirectoryTab() {
                 type="button"
                 onClick={handleConfirmRemoveMember}
                 disabled={isRemoving}
-                className="flex items-center space-x-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:bg-rose-400 text-white text-xs font-semibold rounded-xl shadow-md transition cursor-pointer"
+                className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 disabled:bg-rose-400 text-white text-xs font-semibold rounded-xl shadow-md transition cursor-pointer flex items-center justify-center space-x-1.5"
               >
                 {isRemoving ? (
                   <>
@@ -949,7 +860,7 @@ export default function TeamDirectoryTab() {
       {/* Invite Member Modal */}
       {isInviteModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
+          <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 sm:space-y-5 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2.5">
                 <div className="h-8 w-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200/70 dark:border-indigo-800/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400">

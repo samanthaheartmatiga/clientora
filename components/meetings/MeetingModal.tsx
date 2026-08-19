@@ -88,9 +88,17 @@ export default function MeetingModal({
   const [meetingType, setMeetingType] = useState<"Online" | "In-Person">(
     editingMeeting?.meeting_type || "Online"
   );
-  const [meetingDate, setMeetingDate] = useState<string>(
-    editingMeeting?.meeting_date || new Date().toISOString().split("T")[0]
-  );
+
+  // Initialize with today's local date in YYYY-MM-DD
+  const [meetingDate, setMeetingDate] = useState<string>(() => {
+    if (editingMeeting?.meeting_date) return editingMeeting.meeting_date;
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  });
+
   const [startTime, setStartTime] = useState<string>(
     editingMeeting?.start_time || "10:00"
   );
@@ -110,20 +118,21 @@ export default function MeetingModal({
   const [notifyClient, setNotifyClient] = useState<boolean>(true);
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [errorMsg, setErrorMsg] = useState<string>("");
 
   // Custom Picker States
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [isTimePickerOpen, setIsTimePickerOpen] = useState(false);
 
-  // Derive active time parts directly without useEffect state duplication
   const { hour12: selectedHour, minute: selectedMinute, period: selectedPeriod } = useMemo(
     () => parseTime24h(startTime),
     [startTime]
   );
 
   const initialDateObj = useMemo(() => {
-    const d = new Date(meetingDate);
-    return isNaN(d.getTime()) ? new Date() : d;
+    if (!meetingDate) return new Date();
+    const [y, m, d] = meetingDate.split("-").map(Number);
+    return new Date(y, m - 1, d);
   }, [meetingDate]);
 
   const [calYear, setCalYear] = useState(initialDateObj.getFullYear());
@@ -182,34 +191,54 @@ export default function MeetingModal({
     const dStr = String(day).padStart(2, "0");
     setMeetingDate(`${calYear}-${mStr}-${dStr}`);
     setIsDatePickerOpen(false);
+    setErrorMsg("");
   };
 
   const updateTimeValue = (h: number, m: number, p: "AM" | "PM") => {
     setStartTime(toTime24h(h, m, p));
+    setErrorMsg("");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!hasAccess || !title || !effectiveClientId || !meetingDate || !startTime) return;
+    setErrorMsg("");
+
+    if (!hasAccess || !title.trim() || !effectiveClientId || !meetingDate || !startTime) {
+      setErrorMsg("Please fill in all required fields.");
+      return;
+    }
+
+    // Precise local date and time parsing
+    const [year, month, day] = meetingDate.split("-").map(Number);
+    const [hours, minutes] = startTime.split(":").map(Number);
+    const scheduledDateTime = new Date(year, month - 1, day, hours, minutes, 0);
+    const currentNow = new Date();
+
+    // Block scheduling in the past (only for new meetings or scheduled status)
+    if (status === "Scheduled" && scheduledDateTime.getTime() < currentNow.getTime()) {
+      setErrorMsg("Cannot schedule a meeting in the past. Please select an upcoming date and time.");
+      return;
+    }
 
     try {
       setIsSubmitting(true);
       await onSubmit({
         client_id: effectiveClientId,
         project_id: projectId || null,
-        title,
+        title: title.trim(),
         meeting_type: meetingType,
         meeting_date: meetingDate,
         start_time: startTime,
-        duration_minutes: Number(durationMinutes) || 30,
+        duration_minutes: Math.max(5, Number(durationMinutes) || 30),
         meeting_link: meetingType === "Online" ? meetingLink || null : null,
         location: meetingType === "In-Person" ? location || null : null,
         status,
-        notes,
+        notes: notes.trim() || null,
         notifyClient,
       });
     } catch (err) {
       console.error("Error saving meeting:", err);
+      setErrorMsg("Failed to save meeting. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -243,12 +272,21 @@ export default function MeetingModal({
           </button>
         </div>
 
+        {/* Permissions Alert */}
         {!loading && !hasAccess && (
           <div className="mt-4 flex items-center space-x-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-2xl p-3 text-xs text-rose-600 dark:text-rose-400 shrink-0">
             <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
             <span>
               Permission Denied: Your role ({role}) cannot {editingMeeting ? "edit" : "schedule"} meetings.
             </span>
+          </div>
+        )}
+
+        {/* Validation / Past Date Error Alert */}
+        {errorMsg && (
+          <div className="mt-4 flex items-center space-x-2 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/80 rounded-2xl p-3.5 text-xs text-rose-600 dark:text-rose-400 shrink-0 animate-in fade-in slide-in-from-top-1">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+            <span className="font-semibold">{errorMsg}</span>
           </div>
         )}
 
@@ -304,7 +342,10 @@ export default function MeetingModal({
               disabled={!hasAccess}
               placeholder="e.g. Website Scope Kick-off Call"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                setErrorMsg("");
+              }}
               className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
             />
           </div>
@@ -322,6 +363,7 @@ export default function MeetingModal({
                 onChange={(e) => {
                   setClientId(e.target.value);
                   setProjectId("");
+                  setErrorMsg("");
                 }}
                 className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >

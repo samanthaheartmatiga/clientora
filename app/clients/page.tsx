@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Trash2, AlertTriangle } from "lucide-react";
 import { createClient } from "@/app/supabase/client";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { logWorkspaceActivity } from "@/lib/audit";
@@ -40,6 +40,10 @@ export default function ClientsPage() {
 
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
+
+  // State for on-theme Centered Delete Modal
+  const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   const loadClientsData = useCallback(async () => {
     if (!currentOrgId) {
@@ -205,24 +209,40 @@ export default function ClientsPage() {
     }
   };
 
-  const handleDeleteClient = async (id: string) => {
-    if (!currentOrgId) return;
-    const targetClient = clients.find((c) => c.id === id);
+  // Open the centered confirmation modal
+  const handleInitiateDelete = (id: string) => {
+    const target = clients.find((c) => c.id === id);
+    if (target) {
+      setClientToDelete(target);
+    }
+  };
 
-    const { error } = await supabase
-      .from("clients")
-      .delete()
-      .eq("id", id)
-      .eq("organization_id", currentOrgId);
+  // Confirm and execute the delete action
+  const handleConfirmDelete = async () => {
+    if (!currentOrgId || !clientToDelete) return;
 
-    if (!error) {
-      setClients((prev) => prev.filter((c) => c.id !== id));
-      await logWorkspaceActivity(
-        `Deleted Client: ${targetClient?.company_name || "Client Record"}`,
-        currentOrgId
-      );
-    } else {
-      console.error("Failed to delete client:", error.message);
+    try {
+      setIsDeleting(true);
+      const { error } = await supabase
+        .from("clients")
+        .delete()
+        .eq("id", clientToDelete.id)
+        .eq("organization_id", currentOrgId);
+
+      if (!error) {
+        setClients((prev) => prev.filter((c) => c.id !== clientToDelete.id));
+        await logWorkspaceActivity(
+          `Deleted Client: ${clientToDelete.company_name || "Client Record"}`,
+          currentOrgId
+        );
+      } else {
+        console.error("Failed to delete client:", error.message);
+      }
+    } catch (err) {
+      console.error("Error during deletion:", err);
+    } finally {
+      setIsDeleting(false);
+      setClientToDelete(null);
     }
   };
 
@@ -259,7 +279,7 @@ export default function ClientsPage() {
         clients={filteredClients}
         loading={loading}
         onEdit={handleOpenEditModal}
-        onDelete={handleDeleteClient}
+        onDelete={handleInitiateDelete}
       />
 
       <ClientModal
@@ -272,6 +292,50 @@ export default function ClientsPage() {
         editingClient={editingClient}
         onSubmit={handleFormSubmit}
       />
+
+      {/* THEMED CENTERED CONFIRMATION MODAL (MOBILE & DESKTOP CENTERED) */}
+      {clientToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-5 sm:p-6 text-center space-y-4 mx-auto my-auto transform transition-all scale-100">
+            <div className="h-12 w-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
+              <AlertTriangle className="h-6 w-6" />
+            </div>
+
+            <div className="space-y-1.5">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                Delete Client
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed px-2">
+                Are you sure you want to delete{" "}
+                <strong className="text-slate-800 dark:text-slate-200 wrap-break-words">
+                  {clientToDelete.company_name}
+                </strong>
+                ? This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setClientToDelete(null)}
+                className="w-full py-2.5 text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleConfirmDelete}
+                className="w-full py-2.5 text-xs font-semibold rounded-xl bg-rose-600 hover:bg-rose-500 disabled:bg-rose-400 text-white shadow-lg shadow-rose-600/20 transition cursor-pointer flex items-center justify-center space-x-1.5"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>{isDeleting ? "Deleting..." : "Delete"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -159,7 +159,7 @@ export default function Sidebar({ mobileOpen = false, setMobileOpen }: SidebarPr
                 <div className="flex items-center space-x-3">
                   <div className="h-9 w-9 rounded-xl overflow-hidden flex items-center justify-center shrink-0">
                     <Image
-                      src="/clientora_logo.png"
+                      src="/clientoralogonobg.png"
                       alt="ClientOra Logo"
                       width={36}
                       height={36}
